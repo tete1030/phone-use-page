@@ -1,0 +1,13 @@
+services:
+  console:
+    environment:
+      WEBRTC_TURN_PROVIDER: cloudflare
+      WEBRTC_ICE_MODE: ${WEBRTC_ICE_MODE:-relay}
+      CF_TURN_KEY_FILE: /run/secrets/cloudflare-turn-key
+    volumes:
+      - type: bind
+        source: ${CF_TURN_KEY_PATH:-./.local/cloudflare-turn-key.json}
+        target: /run/secrets/cloudflare-turn-key
+        read_only: true
+        bind:
+          create_host_path: false

@@ -1,0 +1,32 @@
+name: Checks
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.13'
+      - name: Check publication boundary
+        run: npm run check:publication
+      - run: npm ci
+      - run: pip install -r requirements.lock
+      - run: npm run build
+      - run: npm test
+        env:
+          PYTHON_PATH: python3
+      - run: python3 -m unittest discover -s tests -p 'test_*.py'
+      - name: Install fixture browser
+        run: |
+          npx playwright install --with-deps chromium
+          echo "CHROME_PATH=$(node --input-type=module -e 'import {chromium} from "playwright"; process.stdout.write(chromium.executablePath())')" >> "$GITHUB_ENV"
+      - run: npm run test:ui

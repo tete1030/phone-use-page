@@ -1,0 +1,56 @@
+{
+  "name": "phone-use-page",
+  "version": "1.0.0",
+  "description": "Browser-based Android console with video, UI tree, text input and agent scripting",
+  "main": "index.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "build": "tsc --noEmit && node scripts/build.mjs",
+    "start": "node --env-file-if-exists=.env dist/server.js",
+    "dev": "tsx src/server.ts",
+    "test": "node --import tsx tests/core.test.ts && npm run test:auth && npm run test:webrtc",
+    "check": "tsc --noEmit",
+    "test:auth": "node --import tsx tests/auth.test.ts",
+    "test:webrtc": "node --import tsx tests/webrtc.test.ts && node --import tsx tests/turn.test.ts && node --import tsx tests/turn-fallback.test.ts && node --import tsx tests/wss.test.ts && node --import tsx tests/video-race.test.ts && node --import tsx tests/wss-encoder.test.ts && node --import tsx tests/video-freshness.test.ts && node --import tsx tests/session-keyboard.test.ts",
+    "test:webrtc:live": "PHONE_LIVE_TEST=1 node tests/webrtc-live.mjs",
+    "test:ui": "node --import tsx tests/ui-interactions.mjs && node --import tsx tests/agent-ui.mjs",
+    "check:publication": "python3 scripts/check-publication.py"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@fastify/cookie": "11.1.2",
+    "@fastify/static": "10.1.5",
+    "@fastify/websocket": "11.3.3",
+    "@yume-chan/adb": "2.6.4",
+    "@yume-chan/adb-scrcpy": "2.3.2",
+    "@yume-chan/adb-server-node-tcp": "2.5.2",
+    "@yume-chan/scrcpy": "2.3.0",
+    "@yume-chan/scrcpy-decoder-webcodecs": "2.5.3",
+    "fastify": "5.12.5",
+    "quickjs-emscripten": "0.32.0",
+    "werift": "0.25.0",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.4",
+    "@types/ws": "8.18.2",
+    "esbuild": "0.28.2",
+    "playwright": "1.58.2",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2"
+  },
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tete1030/phone-use-page.git"
+  },
+  "homepage": "https://github.com/tete1030/phone-use-page"
+}

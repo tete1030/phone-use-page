@@ -1,0 +1,10 @@
+import { build } from 'esbuild';
+import { mkdir, copyFile,readFile,writeFile } from 'node:fs/promises';
+import {createHash} from 'node:crypto';
+await mkdir('dist/web',{recursive:true});
+await build({entryPoints:['src/server.ts','src/script-worker.ts'],outdir:'dist',bundle:true,platform:'node',format:'esm',target:'node22',packages:'external',sourcemap:true});
+await build({entryPoints:['src/client.ts'],outfile:'dist/web/client.js',bundle:true,platform:'browser',format:'esm',target:'chrome120',sourcemap:true});
+await copyFile('web/style.css','dist/web/style.css');
+const assets=await Promise.all(['dist/web/client.js','dist/web/style.css'].map(path=>readFile(path)));
+const version=createHash('sha256').update(assets[0]).update(assets[1]).digest('hex').slice(0,16);
+await writeFile('dist/web/assets.json',JSON.stringify({version})+'\n');

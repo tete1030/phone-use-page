@@ -1,0 +1,76 @@
+name: android-console
+services:
+  console:
+    image: ${ANDROID_CONSOLE_IMAGE:-android-console:local}
+    build:
+      context: .
+      args:
+        APP_REVISION: ${APP_REVISION:-local}
+    init: true
+    restart: unless-stopped
+    # Linux host networking keeps ADB private and avoids ICE address/port translation.
+    network_mode: host
+    user: "${CONSOLE_UID:-1000}:${CONSOLE_GID:-1000}"
+    group_add:
+      - "${ANDROID_USB_GID:-46}"
+    device_cgroup_rules:
+      - "c 189:* rw"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m,mode=1777
+    stop_grace_period: 30s
+    pids_limit: 256
+    mem_limit: 1536m
+    environment:
+      HOST: 0.0.0.0
+      PORT: ${CONSOLE_HTTP_PORT:-8780}
+      ANDROID_SERIAL: ${ANDROID_SERIAL:?Set ANDROID_SERIAL in your private compose.env}
+      CONSOLE_PASSWORD_FILE: /run/secrets/console-password
+      AUTH_DATA_DIR: /app/.local/auth
+      AUTH_REMEMBER_DAYS: ${AUTH_REMEMBER_DAYS:-90}
+      CONSOLE_BASE_PATH: ${CONSOLE_BASE_PATH:-/}
+      CONSOLE_COOKIE_PATH: ${CONSOLE_COOKIE_PATH:-/}
+      CONSOLE_PUBLIC_ORIGIN: ${CONSOLE_PUBLIC_ORIGIN:-}
+      TRUST_PROXY: ${TRUST_PROXY:-}
+      WEBRTC_PORT_MIN: ${WEBRTC_PORT_MIN:-50000}
+      WEBRTC_PORT_MAX: ${WEBRTC_PORT_MAX:-50031}
+      WEBRTC_STUN_URL: ${WEBRTC_STUN_URL:-stun:stun.cloudflare.com:3478}
+      WEBRTC_ICE_GATHER_MS: ${WEBRTC_ICE_GATHER_MS:-8000}
+      WEBRTC_TURN_PROVIDER: ${WEBRTC_TURN_PROVIDER:-none}
+      WEBRTC_ICE_MODE: ${WEBRTC_ICE_MODE:-}
+      WEBRTC_TURN_TTL_SECONDS: ${WEBRTC_TURN_TTL_SECONDS:-14400}
+      CF_TURN_KEY_FILE: ${CF_TURN_KEY_FILE:-}
+      WEBRTC_PUBLIC_IP: ${WEBRTC_PUBLIC_IP:-}
+      VIDEO_WSS_FALLBACK: ${VIDEO_WSS_FALLBACK:-0}
+      WSS_ADAPTIVE_ENCODER: ${WSS_ADAPTIVE_ENCODER:-1}
+    volumes:
+      - type: bind
+        source: ${CONSOLE_PASSWORD_PATH:-./.local/console-password}
+        target: /run/secrets/console-password
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${CONSOLE_STATE_PATH:-./.local/docker/state}
+        target: /app/.local
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${CONSOLE_HOME_PATH:-./.local/docker/home}
+        target: /home/node
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /dev/bus/usb
+        target: /dev/bus/usb
+        bind:
+          create_host_path: false
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"

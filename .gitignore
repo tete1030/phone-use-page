@@ -1,0 +1,47 @@
+# Dependencies, generated output and local runtime/deployment data.
+/node_modules/
+/.venv/
+/.local/
+/dist/
+/deploy/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+coverage/
+test-results/
+playwright-report/
+
+# Private configuration and credentials; only sanitized examples are public.
+.env*
+!.env.example
+compose.env
+compose.env.*
+!compose.env.example
+secrets/
+private/
+.android/
+adbkey*
+*turn-key*.json
+console-password*
+password.txt
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+
+# Device captures, audit/session stores and operational evidence.
+*.log
+*.sqlite*
+*.db
+*.pcap*
+*.har
+*.h264
+*.png
+*.jpg
+*.jpeg
+*.webm
+*.mp4
+*.tar*
+*.zip
+.DS_Store

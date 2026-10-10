@@ -1,0 +1,9 @@
+{
+  "compilerOptions": {
+    "target": "ES2022", "module": "NodeNext", "moduleResolution": "NodeNext",
+    "strict": true, "skipLibCheck": true, "esModuleInterop": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"], "types": ["node"],
+    "outDir": "dist", "rootDir": ".", "noEmit": true
+  },
+  "include": ["src/**/*.ts", "tests/**/*.ts"]
+}

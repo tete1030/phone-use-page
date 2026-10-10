@@ -1,0 +1,46 @@
+# Documentation addresses only; copy to private configuration and adapt to your network.
+listening-ip=192.0.2.10
+relay-ip=192.0.2.10
+listening-port=5348
+tls-listening-port=5349
+min-port=52000
+max-port=52063
+relay-threads=2
+realm=turn.example.com
+server-name=turn.example.com
+fingerprint
+use-auth-secret
+static-auth-secret=REPLACE_WITH_PRIVATE_SECRET
+cert=/certificates/fullchain.pem
+pkey=/certificates/privkey.pem
+no-tcp
+no-udp
+no-dtls
+no-tcp-relay
+no-cli
+no-tlsv1
+no-tlsv1_1
+no-multicast-peers
+no-dynamic-ip-list
+no-software-attribute
+denied-peer-ip=0.0.0.0-0.255.255.255
+denied-peer-ip=10.0.0.0-10.255.255.255
+denied-peer-ip=100.64.0.0-100.127.255.255
+denied-peer-ip=127.0.0.0-127.255.255.255
+denied-peer-ip=169.254.0.0-169.254.255.255
+denied-peer-ip=172.16.0.0-172.31.255.255
+denied-peer-ip=192.168.0.0-192.168.255.255
+denied-peer-ip=198.18.0.0-198.19.255.255
+denied-peer-ip=224.0.0.0-255.255.255.255
+# LAN validation only: both peers use this host's relay allocations.
+# Review this exception when publishing public relay addresses.
+# allowed-peer-ip=YOUR_EXPLICITLY_APPROVED_RELAY_ADDRESS
+user-quota=2
+total-quota=8
+max-bps=1000000
+bps-capacity=4000000
+stale-nonce=600
+pidfile=/tmp/coturn.pid
+log-file=stdout
+simple-log
+no-stdout-log

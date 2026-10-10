@@ -1,0 +1,14 @@
+services:
+  console:
+    environment:
+      WEBRTC_TURN_FALLBACK: cloudflare
+      CF_TURN_KEY_FILE: /run/secrets/cloudflare-turn-key
+      VIDEO_WSS_FALLBACK: "1"
+      WSS_ADAPTIVE_ENCODER: "1"
+    volumes:
+      - type: bind
+        source: ${CF_TURN_KEY_PATH:-./.local/cloudflare-turn-key.json}
+        target: /run/secrets/cloudflare-turn-key
+        read_only: true
+        bind:
+          create_host_path: false

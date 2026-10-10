@@ -1,0 +1,278 @@
+:root{color-scheme:light}html,body{margin:0;overflow:hidden}body{font-family:"Noto Sans SC",sans-serif}
+body{background:#f5f7fc}
+#android-observable .video-canvas{display:block;width:100%;height:100%;object-fit:contain;background:#edf2fa}
+#android-observable .wss-canvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;object-fit:contain;background:#edf2fa}
+#android-observable .video-candidate{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;pointer-events:none;background:#edf2fa}
+#android-observable .video-placeholder{z-index:2}
+#android-observable .video-modes{margin:0;padding:2px 6px;border:0;border-top:1px solid var(--as-line);display:flex;align-items:center;flex-wrap:wrap;gap:2px 7px;font-size:11px}
+#android-observable .video-modes legend{float:left;margin-right:4px;padding:0;color:var(--as-dim)}
+#android-observable .video-modes label{display:flex;gap:2px;align-items:center;white-space:nowrap}
+#android-observable .video-modes input{margin:0}
+#android-observable .video-modes span{width:100%;color:var(--as-dim);font-size:10px}
+#android-observable .video-placeholder{position:absolute;inset:0;display:grid;place-items:center;font-size:16px;color:var(--as-dim)}
+#android-observable .highlight-box{position:absolute;pointer-events:none;border:2px solid var(--as-accent);background:color-mix(in srgb,var(--as-accent) 9%,transparent)}
+#android-observable .node-list .node-code{width:68px}
+#android-observable .node-label{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+#android-observable .node-value{max-width:245px;overflow:hidden;text-overflow:ellipsis}
+#android-observable .detail-name{max-width:620px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+#android-observable .node-list .node-button{font-size:13px}
+#android-observable .task-link{font-size:11px;color:var(--as-accent);margin-left:5px}
+#android-observable .node-footer .ui-status{max-width:390px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+#android-observable .topbar .foreground{display:inline-block;max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle}
+
+#android-observable { --as-bg:#f5f7fc; --as-panel:#ffffff; --as-text:#30415a; --as-dim:#687a93; --as-line:#dce4ef; --as-soft:#f5f8fd; --as-accent:#4774b5; --as-on-accent:#315a96; --as-select:#edf3ff; --as-warn:#976a2e; --as-warn-bg:#fff5e3; width:100%;max-width:1919px;aspect-ratio:1919/998;position:relative;margin:0 auto;overflow:hidden; }
+#android-observable * {box-sizing:border-box;}
+#android-observable .app {position:absolute;inset:0 auto auto 0;width:1919px;height:998px;transform-origin:top left;background:var(--as-bg);color:var(--as-text);font:14px/1.4 'Noto Sans SC',sans-serif;display:grid;grid-template-rows:40px 50px minmax(0,1fr) 22px;overflow:hidden;}
+#android-observable .mono {font-family:'IBM Plex Mono',monospace;}
+#android-observable .dim {color:var(--as-dim);}
+#android-observable button,#android-observable input,#android-observable textarea {font:inherit;color:inherit;}
+#android-observable button {display:inline-flex;align-items:center;justify-content:center;gap:5px;padding:3px 9px;min-height:26px;background:var(--as-panel);border:1px solid var(--as-line);border-radius:3px;white-space:nowrap;}
+#android-observable button:hover {background:var(--as-soft);}
+#android-observable button.primary {background:#edf3ff;color:var(--as-on-accent);border-color:#bfd0eb;}
+#android-observable button[aria-pressed=true],#android-observable button[aria-selected=true] {background:var(--as-select);border-color:var(--as-accent);color:var(--as-accent);}
+#android-observable button:disabled {opacity:.45;}
+#android-observable input:not([type=checkbox]),#android-observable textarea {width:100%;min-width:0;border:1px solid var(--as-line);border-radius:3px;background:var(--as-soft);padding:6px 8px;}
+#android-observable textarea {resize:none;display:block;}
+#android-observable h1,#android-observable h2 {margin:0;font-size:14px;font-weight:500;}
+#android-observable .topbar {display:flex;align-items:center;gap:18px;padding:0 108px 0 12px;background:var(--as-panel);border-bottom:1px solid var(--as-line);font-size:13px;}
+#android-observable .topbar h1 {margin-right:6px;font-family:'IBM Plex Mono',monospace;}
+#android-observable .tag {font-size:12px;background:var(--as-warn-bg);color:var(--as-warn);padding:2px 6px;border-radius:2px;}
+#android-observable .topbar .size {margin-left:auto;color:var(--as-dim);font-size:12px;}
+#android-observable .routing {display:flex;align-items:center;gap:18px;padding:0 10px;border-bottom:1px solid var(--as-line);background:var(--as-warn-bg);color:var(--as-warn);font-size:13px;}
+#android-observable .routing.captured {background:var(--as-select);color:var(--as-accent);}
+#android-observable .routing .route-summary {display:flex;align-items:center;gap:18px;}
+#android-observable .routing strong {font-weight:500;}
+#android-observable .capture-buttons {margin-left:auto;display:flex;gap:5px;}
+#android-observable .workspace {display:grid;grid-template-columns:432px 900px minmax(0,1fr);grid-template-rows:260px minmax(0,1fr);grid-template-areas:"phone applications commands" "phone nodes commands";gap:8px;padding:8px;min-height:0;}
+#android-observable .phone-pane {grid-area:phone;display:grid;grid-template-rows:minmax(0,1fr) 30px 44px 48px;min-height:0;background:var(--as-soft);border:1px solid var(--as-line);}
+#android-observable .phone-stage {min-height:0;display:flex;align-items:center;justify-content:center;padding:3px;}
+#android-observable .phone {display:block;position:relative;aspect-ratio:1080/2400;width:auto;height:100%;max-height:846px;min-height:0;padding:0;border:2px solid var(--as-text);border-radius:9px;overflow:hidden;background:var(--as-panel);color:var(--as-text);text-align:left;touch-action:none;}
+#android-observable .phone:hover {background:var(--as-panel);}
+#android-observable .phone-top {height:36px;padding:0 20px;display:flex;align-items:center;justify-content:space-between;font-size:13px;}
+#android-observable .camera {position:absolute;top:10px;left:calc(50% - 5px);height:10px;width:10px;border-radius:50%;background:var(--as-text);}
+#android-observable .phone-body {display:block;padding:26px 20px 20px;}
+#android-observable .phone-title {display:block;font-size:38px;font-weight:500;margin-bottom:23px;}
+#android-observable .phone-search {display:flex;align-items:center;gap:8px;background:var(--as-soft);padding:13px 12px;min-height:49px;font-size:18px;color:var(--as-dim);border-radius:8px;margin-bottom:23px;overflow-wrap:anywhere;}
+#android-observable .phone-row {display:flex;align-items:center;gap:13px;min-height:77px;padding:15px 0;border-bottom:1px solid var(--as-line);font-size:20px;}
+#android-observable .phone-icon {display:grid;place-items:center;width:35px;height:35px;flex:none;border-radius:8px;background:var(--as-select);color:var(--as-accent);}
+#android-observable .phone-hint {font-size:14px;color:var(--as-dim);margin-left:auto;}
+#android-observable .phone-home {position:absolute;bottom:9px;width:76px;height:4px;border-radius:3px;left:calc(50% - 38px);background:var(--as-text);}
+#android-observable .phone [data-phone-node].highlight {outline:2px solid var(--as-accent);outline-offset:3px;border-radius:4px;}
+#android-observable .nav {display:flex;align-items:center;justify-content:center;gap:5px;border-top:1px solid var(--as-line);padding:1px 5px;}
+#android-observable .nav button {flex:1;font-size:13px;}
+#android-observable .phone-caption {display:flex;align-items:center;justify-content:center;gap:14px;font-size:11px;color:var(--as-dim);}
+#android-observable .nodes-pane {grid-area:nodes;min-height:0;border:1px solid var(--as-line);background:var(--as-panel);display:grid;grid-template-rows:28px 34px 26px 18px minmax(0,1fr) 82px 20px;}
+#android-observable .section-head {display:flex;align-items:center;justify-content:space-between;gap:9px;padding:0 8px;border-bottom:1px solid var(--as-line);height:28px;min-width:0;}
+#android-observable .head-status {font-size:12px;color:var(--as-dim);}
+#android-observable .searchbar {display:flex;align-items:center;gap:5px;padding:3px 7px;}
+#android-observable .searchbar label {flex:1;min-width:0;}
+#android-observable .searchbar input {height:26px;font-size:13px;}
+#android-observable .searchbar button {font-size:12px;}
+#android-observable .node-filter {display:flex;gap:4px;align-items:center;padding:0 7px;border-bottom:1px solid var(--as-line);}
+#android-observable .node-filter button {font-size:12px;min-height:22px;padding:1px 7px;}
+#android-observable .node-filter .count {margin-left:auto;font-size:12px;color:var(--as-dim);}
+#android-observable .node-body {overflow:auto;overscroll-behavior:contain;min-height:0;padding:2px 6px;}
+#android-observable .node-list,#android-observable .node-list ul {padding:0;margin:0;list-style:none;}
+#android-observable .node-list li {display:block;min-width:0;}
+#android-observable .node-list .node-button {display:flex;align-items:center;justify-content:flex-start;gap:7px;text-align:left;width:100%;height:var(--as-row-height,22px);min-height:var(--as-row-height,22px);font-size:14px;padding:1px 5px;border:0;border-radius:2px;background:transparent;}
+#android-observable .node-list .node-button:hover {background:var(--as-soft);}
+#android-observable .node-list .node-button.is-inspected {background:var(--as-select);color:var(--as-accent);}
+#android-observable .node-list .node-static {padding:1px 5px;font-size:13px;display:flex;gap:7px;align-items:center;width:100%;height:var(--as-row-height,22px);color:var(--as-dim);}
+#android-observable .node-code {width:35px;flex:none;color:var(--as-dim);font:12px 'IBM Plex Mono',monospace;}
+#android-observable .node-branch {width:15px;flex:none;color:var(--as-dim);}
+#android-observable .node-value {font-size:12px;color:var(--as-dim);margin-left:auto;}
+#android-observable .node-detail {border-top:1px solid var(--as-line);background:var(--as-soft);padding:4px 8px;display:grid;grid-template-rows:19px 25px minmax(0,1fr);min-width:0;}
+#android-observable .detail-top {display:flex;align-items:center;gap:7px;}
+#android-observable .detail-name {font-size:13px;color:var(--as-accent);font-weight:500;}
+#android-observable .detail-actions {display:flex;gap:4px;align-items:center;}
+#android-observable .detail-actions button {font-size:12px;min-height:22px;padding:1px 6px;}
+#android-observable .detail-properties {font:11px/1.5 'IBM Plex Mono',monospace;color:var(--as-dim);overflow-wrap:anywhere;}
+#android-observable .node-footer {display:flex;align-items:center;justify-content:space-between;padding:0 7px;border-top:1px solid var(--as-line);font-size:11px;color:var(--as-dim);}
+#android-observable .commands {grid-area:commands;display:grid;grid-template-rows:164px 254px 184px 76px minmax(0,1fr);gap:8px;min-height:0;}
+#android-observable .command {background:var(--as-panel);border:1px solid var(--as-line);min-height:0;min-width:0;}
+#android-observable .text-command {display:grid;grid-template-rows:28px minmax(0,1fr) 30px 16px 20px;}
+#android-observable .text-command textarea {height:100%;font-size:14px;}
+#android-observable .text-field {padding:4px 6px;min-height:0;}
+#android-observable .text-toolbar {display:flex;align-items:center;gap:6px;padding:0 6px;}
+#android-observable .text-toolbar label {display:flex;align-items:center;gap:5px;font-size:12px;}
+#android-observable .text-toolbar .text-submit {margin-left:auto;}
+#android-observable .text-toolbar button {font-size:13px;}
+#android-observable .sync-status {padding:0 7px;font-size:11px;color:var(--as-dim);}
+#android-observable .script-command {display:grid;grid-template-rows:28px minmax(0,1fr) 32px 17px;}
+#android-observable .code-field {padding:4px 6px;min-height:0;display:grid;grid-template-columns:minmax(0,1fr);}
+#android-observable .code-field.help-open {grid-template-columns:minmax(0,.95fr) minmax(0,1.05fr);gap:6px;}
+#android-observable .api-toggle {min-height:22px;font-size:12px;padding:1px 7px;}
+#android-observable .api-panel {min-width:0;min-height:0;border:1px solid var(--as-line);background:var(--as-panel);display:grid;grid-template-rows:19px minmax(0,1fr);padding:3px 5px;gap:2px;}
+#android-observable .api-status {font-size:11px;color:var(--as-warn);}
+#android-observable .api-details {min-height:0;overflow:auto;overscroll-behavior:contain;font-size:12px;}
+#android-observable .api-details p {margin:3px 0;overflow-wrap:anywhere;}
+#android-observable .api-signature {font:12px/1.5 'IBM Plex Mono',monospace;color:var(--as-accent);overflow-wrap:anywhere;}
+#android-observable .api-example {white-space:pre-wrap;overflow-wrap:anywhere;margin:5px 0;font:12px/1.5 'IBM Plex Mono',monospace;background:var(--as-soft);padding:4px;}
+#android-observable .api-entry {padding:5px 0 8px;border-bottom:1px solid var(--as-line);}
+#android-observable .api-entry:last-child {border-bottom:0;}
+#android-observable .api-entry h3 {margin:0;font-weight:500;}
+#android-observable .api-insert {font-size:11px;min-height:22px;padding:1px 6px;max-width:100%;white-space:normal;overflow-wrap:anywhere;text-align:left;}
+#android-observable [hidden] {display:none !important;}
+#android-observable .code-field textarea {height:100%;font:14px/1.65 'IBM Plex Mono',monospace;padding:7px 9px;}
+#android-observable .run-toolbar {display:flex;align-items:center;gap:5px;padding:0 6px;}
+#android-observable .task-status {font-size:12px;color:var(--as-dim);margin-left:auto;}
+#android-observable .script-note {font-size:11px;color:var(--as-dim);padding:0 7px;}
+#android-observable .keyboard-command {display:grid;grid-template-rows:28px 24px minmax(0,1fr) 17px;}
+#android-observable .key-tabs {display:flex;gap:4px;align-items:center;padding:0 6px;}
+#android-observable .key-tabs button {font-size:12px;min-height:20px;padding:0 8px;}
+#android-observable .modifier-status {margin-left:auto;font-size:11px;color:var(--as-dim);}
+#android-observable .keys {display:grid;grid-template-rows:repeat(4,minmax(0,1fr));gap:3px;padding:4px 6px;min-height:0;}
+#android-observable .key-row {display:flex;gap:3px;min-height:0;}
+#android-observable .key-row button {flex:1;min-width:0;min-height:0;padding:0;font:13px 'IBM Plex Mono',monospace;}
+#android-observable .key-row button.wide {flex:1.5;}
+#android-observable .key-row button.space {flex:4;}
+#android-observable .key-note {font-size:11px;color:var(--as-dim);padding:0 7px;}
+#android-observable .gesture-command {display:flex;gap:4px;flex-wrap:wrap;align-content:center;align-items:center;padding:3px 6px;}
+#android-observable .gesture-command strong {font-size:12px;font-weight:400;margin-right:4px;}
+#android-observable .gesture-command button {font-size:12px;min-height:24px;padding:2px 7px;}
+#android-observable .gesture-command .gesture-label {margin-left:5px;font-size:11px;color:var(--as-dim);}
+#android-observable .result-command {display:grid;grid-template-rows:28px minmax(0,1fr) 20px;}
+#android-observable .results {overflow:auto;overscroll-behavior:contain;min-height:0;padding:6px 8px;font:12px/1.7 'IBM Plex Mono',monospace;}
+#android-observable .log-line {display:grid;grid-template-columns:58px minmax(0,1fr);gap:7px;}
+#android-observable .log-time {color:var(--as-dim);}
+#android-observable .log-message {white-space:pre-wrap;overflow-wrap:anywhere;}
+#android-observable .result-footer {font-size:11px;color:var(--as-dim);border-top:1px solid var(--as-line);padding:0 7px;display:flex;align-items:center;}
+#android-observable .footer {font-size:11px;color:var(--as-dim);display:flex;align-items:center;justify-content:space-between;padding:0 10px;border-top:1px solid var(--as-line);background:var(--as-panel);}
+#android-observable .view-help,#android-observable .text-help {padding:0 7px;font-size:11px;color:var(--as-dim);display:flex;align-items:center;}
+#android-observable .phone-toggle {display:inline-block;padding:2px 7px;border-radius:4px;background:var(--as-select);color:var(--as-accent);margin-left:5px;}
+#android-observable .nodes-pane > .section-head h2{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#android-observable .applications-panel{grid-area:applications;min-width:0;min-height:0;display:grid;grid-template-rows:28px minmax(0,1fr) 18px;border:1px solid var(--as-line);background:var(--as-panel)}
+#android-observable .applications-panel > .section-head{gap:8px}
+#android-observable .applications-panel .application-search{margin-left:auto;width:330px;max-width:50%;height:23px;padding:2px 6px;font-size:12px}
+#android-observable .applications-refresh{font-size:12px;min-height:22px;padding:1px 6px}
+#android-observable .applications-columns{display:grid;grid-template-columns:.95fr 1.2fr 1.4fr 1.15fr;min-width:0;min-height:0}
+#android-observable .application-column{display:grid;grid-template-rows:24px minmax(0,1fr) 28px;min-width:0;min-height:0;border-left:1px solid var(--as-line)}
+#android-observable .application-column:first-child{border-left:0}
+#android-observable .application-column-head{display:flex;align-items:center;justify-content:space-between;gap:6px;padding:0 7px;background:var(--as-soft);min-width:0}
+#android-observable .application-column-head h3{margin:0;font-size:12px;font-weight:500;white-space:nowrap}
+#android-observable .application-column-head > span{font-size:11px;color:var(--as-dim);white-space:nowrap}
+#android-observable .navigation-column{grid-template-rows:24px minmax(0,1fr)}
+#android-observable .navigation-summary{padding:4px 7px;min-width:0;min-height:0;font-size:11px;display:grid;grid-template-rows:17px minmax(22px,1fr) auto 39px;gap:3px}
+#android-observable .application-current{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#android-observable .activity-stack{font:11px/15px 'IBM Plex Mono',monospace;color:var(--as-dim);overflow:auto;overflow-wrap:anywhere;min-height:0}
+#android-observable .navigation-controls{display:flex;flex-wrap:wrap;gap:4px;align-content:start;align-items:center;min-width:0}
+#android-observable .navigation-controls button{font-size:11px;min-height:22px;padding:1px 5px}
+#android-observable .navigation-controls label{display:flex;gap:3px;align-items:center;white-space:nowrap;font-size:11px}
+#android-observable .navigation-controls .back-steps{width:34px;padding:1px 3px;font-size:12px;height:21px;box-sizing:border-box}
+#android-observable .navigation-limit,#android-observable .application-help,#android-observable .all-packages-label{font-size:10px;line-height:13px;color:var(--as-dim)}
+#android-observable .application-help,#android-observable .all-packages-label{padding:2px 7px;min-width:0}
+#android-observable .all-packages-label{display:flex;align-items:center;gap:4px}
+#android-observable .applications-status{border-top:1px solid var(--as-line);padding:0 7px;font-size:10px;line-height:17px;color:var(--as-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#android-observable .application-list{list-style:none;padding:0 7px;margin:0;overflow:auto;min-height:0;overscroll-behavior:contain}
+#android-observable .application-row{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:auto auto;gap:0 4px;padding:3px 0;border-bottom:1px solid var(--as-line);font-size:12px;line-height:14px}
+#android-observable .application-name,#android-observable .application-meta{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+#android-observable .application-meta{grid-column:1;font-size:10px;color:var(--as-dim);line-height:12px}
+#android-observable .application-actions{grid-column:2;grid-row:1 / 3;display:flex;flex-direction:column;gap:2px;max-width:90px;min-width:0;justify-content:center}
+#android-observable .application-actions button{font-size:10px;padding:1px 4px;min-height:21px;max-width:90px;overflow:hidden;text-overflow:ellipsis;display:block;text-align:left}
+#android-observable .snapshot-warning{font-size:12px;color:var(--as-warn);background:var(--as-warn-bg);padding:5px 6px;white-space:normal}
+
+#android-observable .app{background:radial-gradient(ellipse at top left,#ffffff 0,#f5f7fc 65%)}
+#android-observable .topbar{gap:13px;padding-right:12px}
+#android-observable .device-status{margin-left:auto;white-space:nowrap;padding:2px 8px;border:1px solid var(--as-line);border-radius:3px;font-size:12px}
+#android-observable .page-status{padding:2px 8px;border-radius:3px;background:#eef4ff;color:#3e65a0;font-size:12px;white-space:nowrap}
+#android-observable .page-status[data-state=offline]{background:#fff0eb;color:#a14f3a}
+#android-observable .page-reconnect{min-height:24px;font-size:12px;background:#fff3ee;border-color:#eacabd}
+#android-observable .routing{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:26px 16px;gap:0 12px;padding:4px 12px;background:#f0f4fb;color:var(--as-text)}
+#android-observable .routing.captured{background:#eaf2ff}
+#android-observable .routing-help{grid-column:1 / -1;font-size:11px;color:var(--as-dim);line-height:16px}
+#android-observable .capture-buttons{grid-column:2;grid-row:1}
+#android-observable .connection-note{position:absolute;z-index:8;top:91px;left:8px;right:8px;padding:8px 12px;border:1px solid #e2c6b6;background:#fff7f1;color:#98593b;font-size:13px;border-radius:3px}
+#android-observable .workspace{position:relative}
+#android-observable .workspace[inert]{opacity:.66}
+#android-observable .screen-shield{position:absolute;inset:0;z-index:4;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:9px;background:rgba(247,250,255,.94);color:var(--as-text);padding:22px;text-align:center}
+#android-observable .screen-title{font-size:22px;font-weight:500}
+#android-observable .screen-help{font-size:13px;line-height:1.7;max-width:280px;color:var(--as-dim);white-space:normal}
+#android-observable .video-freshness-banner{position:absolute;z-index:6;top:10px;left:10px;right:10px;display:flex;flex-direction:column;gap:3px;padding:9px 11px;border:1px solid #d59252;border-radius:4px;background:rgba(255,244,221,.97);color:#7a4519;pointer-events:none;line-height:1.5;white-space:normal;box-shadow:0 2px 10px rgba(55,40,15,.12)}
+#android-observable .video-freshness-title{font-size:15px;font-weight:600}
+#android-observable .video-freshness-detail{font-size:12px}
+#android-observable .video-freshness-banner[data-state=offline]{border-color:#c87768;background:rgba(255,236,229,.97);color:#923e30}
+#android-observable .video-freshness-status{float:right;font-size:11px;color:#805423;white-space:nowrap}
+#android-observable .video-freshness-status[data-state=current]{color:#4d6486}
+#android-observable .phone-caption{display:flex;flex-wrap:wrap;gap:0 5px;justify-content:space-between;align-content:center;padding:1px 6px;font-size:11px;line-height:17px}
+#android-observable .phone-operation-help{width:100%;text-align:left;color:#4d6486}
+#android-observable .node-footer{gap:12px;font-size:11px;min-width:0}
+#android-observable .node-footer > span{overflow:hidden;white-space:nowrap;text-overflow:ellipsis;min-width:0;flex:1}
+#android-observable .node-footer .ui-status{max-width:none}
+#android-observable .node-footer > span:last-child{text-align:right}
+#android-observable .footer{font-size:11px}
+
+.login-page{min-height:100vh;display:grid;place-items:center;background:radial-gradient(ellipse at top left,#fff,#f0f4fb);color:#30415a;font:14px/1.6 "Noto Sans SC",sans-serif;overflow:auto}
+.login-card{width:min(380px,calc(100vw - 64px));padding:28px;border:1px solid #dce4ef;border-radius:8px;background:#fff;box-shadow:0 18px 65px rgba(44,69,108,.08)}
+.login-card h1{margin:0;font-size:23px;font-weight:500}
+#android-observable{max-width:none;aspect-ratio:auto;height:100dvh}
+#android-observable .app{position:relative;width:100%;height:100%;padding:6px;grid-template-columns:var(--phone-column,400px) minmax(0,1fr);grid-template-rows:minmax(0,1fr);gap:8px}
+#android-observable .phone-pane{grid-area:auto;grid-template-rows:minmax(0,1fr) 34px;gap:4px;border:0}
+#android-observable .phone-stage{position:relative;padding:0}
+#android-observable .phone{max-height:none}
+#android-observable .nav{border:0;padding:0;gap:3px}
+#android-observable .nav button{font-size:11px;min-width:0;padding:3px 4px}
+#android-observable .right-shell{display:grid;grid-template-rows:32px 110px minmax(0,1fr);gap:5px;min-width:0;min-height:0;position:relative}
+#android-observable .topbar{border:1px solid var(--as-line);font-size:11px;gap:7px;padding:2px 7px}
+#android-observable .topbar .device-system{display:none}
+#android-observable .phone-summary{max-width:350px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-size:10px;color:var(--as-dim)}
+#android-observable .routing{grid-template-rows:24px 20px 34px 25px;gap:0;border:1px solid var(--as-line);padding:3px 6px;font-size:11px}
+#android-observable .routing .route-summary{gap:8px;min-width:0}
+#android-observable .routing .capture-buttons button{font-size:10px;min-height:23px;padding:2px 5px}
+#android-observable .routing-help{font-size:10px;line-height:19px}
+#android-observable .routing .phone-caption{grid-row:3;grid-column:1 / -1;justify-content:flex-start;gap:6px;font-size:10px;overflow:visible}
+#android-observable .phone-caption button{font-size:10px;min-height:23px;padding:2px 5px}
+#android-observable .phone-operation-help{display:none}
+#android-observable .video-modes{grid-row:4;grid-column:1 / -1;flex-wrap:nowrap;border:0;padding:0;font-size:10px}
+#android-observable .video-modes span{width:auto;margin-left:8px;font-size:10px}
+#android-observable .workspace{grid-template-columns:minmax(0,1.1fr) minmax(0,.9fr);grid-template-rows:160px minmax(0,1fr);grid-template-areas:"applications applications" "nodes commands";padding:0;gap:6px}
+#android-observable .applications-columns{grid-template-columns:1fr 1fr 1.15fr}
+#android-observable .applications-panel{position:relative}
+#android-observable .process-diagnostics{font-size:10px;position:absolute;right:5px;bottom:1px;background:var(--as-panel);z-index:4;max-width:400px;border:1px solid var(--as-line);padding:1px 4px}
+#android-observable .process-diagnostics[open]{bottom:20px;box-shadow:0 2px 12px #cad4e5}
+#android-observable .process-diagnostics .application-column{height:230px;min-width:280px}
+#android-observable .commands{grid-template-rows:185px minmax(140px,1fr) 130px 24px;gap:5px;min-height:0}
+#android-observable .text-command{grid-template-rows:28px minmax(34px,1fr) 26px 24px 24px 24px}
+#android-observable .text-help{font-size:10px;line-height:12px}
+#android-observable .text-extra{display:flex;gap:3px;padding:0 6px;align-items:center}
+#android-observable .text-extra button{font-size:10px;min-height:21px;padding:1px 4px}
+#android-observable .text-toolbar{font-size:10px}
+#android-observable .text-toolbar button{font-size:10px;padding:1px 5px}
+#android-observable .advanced-input{font-size:11px;border:1px solid var(--as-line);background:var(--as-panel);padding:2px 6px;position:relative;z-index:5}
+#android-observable .advanced-input[open]{position:absolute;right:0;bottom:0;width:100%;max-height:420px;overflow:auto;box-shadow:0 2px 15px #cad4e5}
+#android-observable .advanced-input .keyboard-command{min-height:180px}
+#android-observable .node-list .node-button{font-size:12px}
+#android-observable .nodes-pane{grid-template-rows:28px 32px 25px 18px minmax(0,1fr) 85px 20px}
+#android-observable .screen-proxy{position:absolute;z-index:7;border:1px solid #87a9d6;background:rgba(243,248,255,.95);padding:2px 5px;font-size:14px;resize:none;min-width:0;width:auto;line-height:1.3;touch-action:auto}
+#android-observable .touch-marker{position:absolute;z-index:8;width:20px;height:20px;border:2px solid #c47e29;border-radius:50%;background:#fff2b977;transform:translate(-50%,-50%);pointer-events:none}
+#android-observable .connection-note{top:38px;left:0;right:0}
+#android-observable .phone-pane.enlarged{position:fixed;inset:0;z-index:20;padding:7px;background:#edf2f9;grid-template-rows:minmax(0,1fr) 34px}
+#android-observable .phone-pane.enlarged .phone-stage{width:100%;height:100%}
+#android-observable .phone-pane.enlarged .phone-stage{overflow:auto;align-items:flex-start}
+#android-observable .phone-pane.enlarged .phone{flex-shrink:0;margin:4px auto}
+#android-observable .close-enlarge{display:none}
+#android-observable .phone-pane.enlarged .close-enlarge{display:block;position:fixed;right:15px;top:15px;z-index:22}
+#android-observable .phone-pane.enlarged .nav{max-width:450px;margin:auto;width:100%}
+#android-observable .routing .video-network-panel{position:fixed;top:160px;bottom:auto;left:auto;right:10px;width:418px;max-height:300px;z-index:30}
+#android-observable .footer{display:none}
+.action-confirmation{width:min(420px,calc(100vw - 40px));border:1px solid #b8c8de;border-radius:6px;padding:20px;color:#30415a;font:14px/1.6 "Noto Sans SC",sans-serif;box-shadow:0 10px 45px #14294633}
+.action-confirmation::backdrop{background:#1a315855}
+.action-confirmation h2{margin:0;font-size:17px}
+.action-confirmation div{display:flex;justify-content:flex-end;gap:8px}
+.action-confirmation button{font:inherit;padding:5px 12px;border:1px solid #c6d3e6;border-radius:3px;background:#f5f8fd;color:inherit}
+.login-card p{color:#687a93;font-size:13px}
+.login-card form{display:grid;gap:10px;margin-top:23px}
+.login-card input[type=password]{font:inherit;padding:9px 10px;border:1px solid #bccde4;border-radius:4px;color:inherit;min-width:0}
+.login-card button{font:inherit;background:#edf3ff;color:#315a96;border:1px solid #bfd0eb;border-radius:4px;padding:8px;cursor:pointer}
+.login-card button:disabled{opacity:.5;cursor:wait}
+.login-card output{color:#a14f3a;min-height:23px;font-size:13px}
+.login-card .remember-label{font-size:13px}
+.login-card .login-note{font-size:11px;margin:0}
+#android-observable .logout{font-size:12px;min-height:24px}
+
+#android-observable .phone-caption{position:relative}
+#android-observable .video-network{position:static;font-size:11px;z-index:6}
+#android-observable .video-network summary{cursor:pointer;padding:0 5px;border:1px solid var(--as-line);border-radius:3px;background:var(--as-panel)}
+#android-observable .video-network-panel{position:absolute;bottom:48px;left:6px;width:calc(100% - 12px);max-height:300px;display:flex;flex-direction:column;box-sizing:border-box;border:1px solid var(--as-line);background:var(--as-panel);color:var(--as-text);box-shadow:0 4px 18px #25384b1a}
+#android-observable .video-network-toolbar{display:flex;align-items:center;gap:8px;flex:none;padding:5px 8px;border-bottom:1px solid var(--as-line)}
+#android-observable .video-network-data{min-height:0;overflow:auto;box-sizing:border-box;margin:0;padding:8px;white-space:pre-wrap;overflow-wrap:anywhere;font:11px/1.5 'IBM Plex Mono',monospace}
+#android-observable .phone{user-select:none;-webkit-user-select:none}
