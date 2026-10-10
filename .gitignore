@@ -45,3 +45,6 @@ password.txt
 *.tar*
 *.zip
 .DS_Store
+
+# One visually reviewed README screenshot; all other device captures stay private.
+!/docs/screenshots/console.png

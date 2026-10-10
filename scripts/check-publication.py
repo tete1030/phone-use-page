@@ -19,6 +19,8 @@ private_markers = root / '.local/publication-private-markers.json'
 markers = json.loads(private_markers.read_text()).get('markers', []) if private_markers.exists() else []
 blocked_dirs = {'.local', '.venv', 'node_modules', 'dist', 'deploy', 'private', 'secrets', '.android', '__pycache__'}
 blocked_extensions = {'.pem', '.key', '.p12', '.pfx', '.crt', '.pcap', '.pcapng', '.har', '.log', '.sqlite', '.db', '.png', '.jpg', '.jpeg', '.h264', '.mp4', '.webm', '.zip', '.gz'}
+# Replacing a reviewed screenshot requires another visual review and hash update.
+reviewed_images = {'docs/screenshots/console.png': 'f7f309abcc7d67be020b894d2b56ca5e411b72916e488da25eba4a61fc9ea1ba'}
 patterns = {
     'private-key': r'-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----',
     'github-token': r'(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,})',
@@ -43,11 +45,15 @@ for record in git('ls-files', '--stage', '-z').split(b'\0'):
         continue
     private_name = (path.name.startswith('.env') and path.name != '.env.example') or (
         path.name.startswith('compose.env') and path.name != 'compose.env.example') or path.name.startswith('adbkey')
-    if blocked_dirs.intersection(path.parts) or private_name or path.suffix.lower() in blocked_extensions:
+    if blocked_dirs.intersection(path.parts) or private_name or (path.suffix.lower() in blocked_extensions and name not in reviewed_images):
         failures.append((name, 0, 'private-path'))
         continue
     blob = git('cat-file', 'blob', oid.decode())
     count += 1
+    if name in reviewed_images:
+        if not blob.startswith(b'\x89PNG\r\n\x1a\n') or hashlib.sha256(blob).hexdigest() != reviewed_images[name]:
+            failures.append((name, 0, 'unreviewed-documentation-image'))
+        continue
     if name == 'vendor/scrcpy-server-v3.3.3':
         if hashlib.sha256(blob).hexdigest() != '7e70323ba7f259649dd4acce97ac4fefbae8102b2c6d91e2e7be613fd5354be0':
             failures.append((name, 0, 'unverified-vendor-binary'))
