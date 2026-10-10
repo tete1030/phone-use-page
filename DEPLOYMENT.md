@@ -1,21 +1,21 @@
-# Deployment
+# 部署指南
 
-Use the [complete Setup manual](docs/SETUP.md) for device authorization, native/Linux Docker startup, HTTPS proxying, optional Cloudflare Tunnel, self-hosted coturn, Cloudflare TURN, validation, upgrades and rollback.
+[完整安装部署手册](docs/SETUP.md)涵盖设备授权、原生/Linux Docker 启动、HTTPS 代理、可选 Cloudflare Tunnel、自建 coturn、Cloudflare TURN、验证、升级和回滚。
 
-## Choose What You Need
+## 按需选择
 
-- **Local or WSS-only**: no TURN account, relay key, domain, public IP or inbound media ports required. Start with the env examples, or Docker `compose.yaml` + `compose.wss.yaml`.
-- **Your own TURN**: any reachable coturn host and DNS/TLS provider; use `compose.coturn.yaml` plus your private secret/URL. A separate Linux TURN recipe is in `examples/coturn/`.
-- **Cloudflare TURN**: independently optional; use `compose.turn.yaml` and your dedicated server-side key. Console DNS/proxy can remain with another provider.
-- **Both TURN services**: coturn primary plus `compose.fallback.yaml`; WSS can be enabled or disabled independently.
-- **HTTP tunnel**: any suitable HTTPS/WebSocket tunnel; Cloudflare Tunnel has an optional recipe. It handles page/WSS traffic, not the separate TURN media path.
+- **本机或仅 WSS**：不需要 TURN 账号、中继密钥、域名、公网 IP 或入站媒体端口。使用环境变量示例，或 Docker 的 `compose.yaml` + `compose.wss.yaml`。
+- **自建 TURN**：使用可达的 coturn 主机和自行选择的 DNS/TLS 服务；配合 `compose.coturn.yaml` 及私有密钥/地址。独立 Linux TURN 示例位于 `examples/coturn/`。
+- **Cloudflare TURN**：独立可选；使用 `compose.turn.yaml` 和服务端专用密钥。控制台 DNS/代理可以继续使用其他供应商。
+- **两种 TURN**：以 coturn 为主，叠加 `compose.fallback.yaml`；WSS 可以独立启用或关闭。
+- **HTTP 隧道**：任何满足 HTTPS/WebSocket 要求的隧道均可；手册包含可选 Cloudflare Tunnel 配置。隧道传输页面/WSS，独立的 TURN 媒体不经过该 HTTP 通道。
 
-For variable behavior and supported combinations, see [CONFIGURATION.md](docs/CONFIGURATION.md). For OS, Android, browser, IPv4/IPv6 and infrastructure boundaries, see [PORTABILITY.md](docs/PORTABILITY.md).
+变量行为和支持的组合见[配置参考](docs/CONFIGURATION.md)。操作系统、安卓、浏览器、IPv4/IPv6 和基础设施限制见[通用性与支持边界](docs/PORTABILITY.md)。
 
-## Existing Deployments
+## 已有部署
 
-The env examples now default to WSS only and loopback HTTP. Existing explicit settings are not rewritten; `WEBRTC_ENABLED` defaults to `1` when omitted for compatibility. Set your own video flags and bind address explicitly.
+环境变量示例现在默认仅启用 WSS，并将 HTTP 绑定到回环地址。已有显式配置不会被自动改写；省略 `WEBRTC_ENABLED` 时，仍默认 `1` 以兼容旧部署。请明确设置视频开关和监听地址。
 
-Compose requires `CONSOLE_UID`, `CONSOLE_GID` and actual `ANDROID_USB_GID` instead of guessing 1000/46. `ANDROID_SERIAL` can be empty for one authorized device; set it explicitly for multiple devices or startup while disconnected. Back up private env/state before changes; do not run the preparation helper with sudo or share power/session state between devices.
+Compose 要求提供实际的 `CONSOLE_UID`、`CONSOLE_GID` 和 `ANDROID_USB_GID`，不再猜测 1000/46。单台已授权设备可以留空 `ANDROID_SERIAL`；多设备或希望设备未连接时启动，应显式设置。修改前备份私有配置和状态；准备脚本不要用 sudo 运行，不同设备不要共用电源恢复记录或会话状态。
 
-Keep private env, credentials, ADB keys, certificates, state, router/proxy configs, captures and deployment history out of Git. Upgrade/rollback by retaining the old image and recreating only the console with the correct overlays/mounts. Validate authenticated video/controls, not just health.
+私有环境变量、凭据、ADB 密钥、证书、状态、路由/代理配置、截图录像和部署历史不能进入 Git。升级/回滚时保留旧镜像，使用正确的叠加文件及挂载，仅重建控制台。验证已登录状态下的真实视频和操作，而不只看健康检查。

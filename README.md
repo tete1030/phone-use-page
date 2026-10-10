@@ -1,35 +1,34 @@
 # Phone Use Page
 
-A browser-based, rootless Android console for humans and browser-capable agents.
-It combines a live phone screen, an accessible UI tree, text input and a restricted JavaScript automation API.
+一个面向真人用户和浏览器智能体的安卓网页控制台，无需 root。它将实时手机画面、可访问的 UI 树、文本输入和受限的 JavaScript 自动化 API 集成到同一页面。
 
-## Features
+## 功能
 
-- Responsive two-column workspace: near-full-height phone video on the left, controls and inspection on the right.
-- Parallel video connection attempts with promotion from WSS to Cloudflare TURN to your own TURN server; manual transport selection is also available.
-- Click, drag, long press, navigation, notification shade and quick-settings controls.
-- A real HTML textbox for the confirmed Android input target: `fill`, typing, Unicode text, Enter and Tab, with native readback verification.
-- UHID hardware-keyboard reports for raw keys and shortcuts; normal text bypasses IME composition through UI Automator text replacement.
-- Installed apps, recent tasks, process diagnostics, screenshots, video reconnect and an operation timeline.
-- A restricted QuickJS device API with unique-target matching, cancellation and a 60-second task limit.
-- Password login, persistent secure sessions, one active control page, five-minute inactivity disconnect and temporary stay-awake restoration.
-- Bounded request audit logs with client IP, user agent and session metadata; passwords, cookies, text and script bodies are excluded.
+- 响应式双栏工作区：左侧尽量完整地显示手机画面，右侧提供操作和检查工具。
+- 并行尝试视频通道；高优先级通道就绪后，从 WSS 升级到 Cloudflare TURN，再升级到自建 TURN，也可手动选择通道。
+- 点击、拖动、长按、导航、通知栏和快捷设置操作。
+- 为已确认的安卓输入目标提供真实 HTML 文本框，支持 `fill`、逐字输入、Unicode、Enter 和 Tab，并通过手机端回读验证。
+- 使用 UHID 硬件键盘报告发送原始按键和快捷键；普通文本通过 UI Automator 替换输入，绕开输入法的组词过程。
+- 已安装应用、最近任务、进程诊断、截图、视频重连和动作时间线。
+- 受限的 QuickJS 设备 API，支持唯一目标匹配、取消任务和单次 60 秒运行限制。
+- 密码登录、持久安全会话、单个在线控制页面、五分钟无操作断连，以及临时保持亮屏和恢复原设置。
+- 有大小限制的请求审计日志，包含客户端 IP、浏览器标识和会话元数据；不记录密码、Cookie、输入文本或脚本正文。
 
-The UI is currently in Chinese. No root or bootloader unlock is required.
+界面为中文，无需 root 或解锁 Bootloader。
 
-## Requirements
+## 运行条件
 
-- Node.js 22.12+, Python 3.11+, ADB and an Android device with USB debugging authorized.
-- Python venv/pip; `uv` is optional for the provided setup script.
-- A current Chromium browser for WebCodecs/WebRTC. HTTPS is required outside localhost.
-- FFmpeg when enabling adaptive WSS encoding.
-- Linux for the USB Docker Compose configuration. Native development can also run on macOS; Docker Desktop USB/host networking is not equivalent to Linux.
+- Node.js 22.12+、Python 3.11+、ADB，以及已授权 USB 调试的安卓设备。
+- Python venv/pip；安装脚本可选使用 `uv`。
+- 支持 WebCodecs/WebRTC 的较新 Chromium 浏览器；localhost 以外的浏览器访问需要 HTTPS。
+- 启用 WSS 自适应编码时需要 FFmpeg。
+- USB Docker Compose 配置需要 Linux。原生开发也可运行在 macOS；Docker Desktop 的 USB 和主机网络行为与 Linux 不同。
 
-Some Android vendors require an additional USB-debugging security setting for event injection. Hardware-keyboard and UI accessibility behavior also depend on the device and app.
+部分安卓厂商要求额外开启调试安全设置才能注入事件。硬件键盘和 UI 无障碍能力也取决于设备及应用。
 
-See the [complete Setup manual](docs/SETUP.md), [configuration reference](docs/CONFIGURATION.md) and [portability boundaries](docs/PORTABILITY.md) for a new installation. No specific phone, NAS, router, DNS or proxy product is required.
+首次安装请阅读[完整安装部署手册](docs/SETUP.md)、[配置参考](docs/CONFIGURATION.md)和[通用性与支持边界](docs/PORTABILITY.md)。本项目不要求特定手机、NAS、路由器、DNS 或代理产品。
 
-## Run Locally
+## 本机启动
 
 ```sh
 sh scripts/setup.sh
@@ -38,51 +37,55 @@ mkdir -p .local
 chmod 700 .local
 ```
 
-Create `.local/console-password` containing your own password of 12-512 characters and set its permissions to `0600`. No default password is shipped.
-Set `ANDROID_SERIAL` in `.env` if multiple devices are attached; otherwise the native server selects the single connected device. Use `adb devices` to discover your device.
+自行创建 `.local/console-password`，填入 12–512 个字符的密码，并设置权限为 `0600`。项目不提供默认密码。
+连接多个设备时，在 `.env` 中设置 `ANDROID_SERIAL`；否则服务会自动选择单台已连接设备。用 `adb devices` 查看设备标识。
 
-The supplied env examples use WSS only: `WEBRTC_ENABLED=0`, `VIDEO_WSS_FALLBACK=1`. This requires no TURN key or external STUN service. Enable direct WebRTC, self-hosted TURN or Cloudflare TURN independently when needed; [transport recipes](docs/SETUP.md#5-select-video-transports) cover each combination. Use `WSS_ADAPTIVE_ENCODER=0` if you do not want FFmpeg adaptation.
+环境变量示例默认仅启用 WSS：`WEBRTC_ENABLED=0`、`VIDEO_WSS_FALLBACK=1`，不需要 TURN 密钥或外部 STUN 服务。可以按需独立启用 WebRTC 直连、自建 TURN 或 Cloudflare TURN；[视频通道配置](docs/SETUP.md#5-select-video-transports)列出了各种组合。无需 FFmpeg 自适应编码时，设置 `WSS_ADAPTIVE_ENCODER=0`。
 
 ```sh
 sh scripts/start.sh
 ```
 
-Open `http://localhost:8780/`. Click **唤醒并解锁** to wake/unlock a device without a passcode; passcode entry remains a manual device operation.
+打开 `http://localhost:8780/`。点击“唤醒并解锁”可唤醒并解锁无需密码的设备；有密码时仍需在手机上完成解锁。
 
-The confirmed phone input appears as a browser textbox named **手机输入框: ...**. Agents should fill that textbox, rather than attempting to fill the video surface. Enter/Tab are sent after the text is verified; Shift+Enter inserts a newline. The right-side text editor exposes the same target and a draft mode.
+已确认的手机输入目标会显示为名为“手机输入框：……”的浏览器文本框。智能体应填写这个文本框；视频表面本身不是可填写的文本控件。文本验证后才发送 Enter/Tab；Shift+Enter 插入换行。右侧文本编辑器使用同一目标，并提供草稿模式。
 
-## Docker and Remote Access
+## Docker 与远程访问
 
-See [DEPLOYMENT.md](DEPLOYMENT.md) for the Linux USB container, reverse proxy, base paths, TURN credentials, WSS and rollback procedure.
-All device identifiers, passwords, relay URLs, proxy addresses and key files belong in private local configuration.
+[DEPLOYMENT.md](DEPLOYMENT.md)提供 Linux USB 容器、反向代理、子路径、TURN 凭据、WSS 和回滚的阅读入口。
+所有真实设备标识、密码、中继地址、代理地址和密钥文件都应放在本地私有配置中。
 
-## Verification
+## 验证
 
 ```sh
 npm run build
 PYTHON_PATH=.venv/bin/python npm test
 .venv/bin/python -m unittest discover -s tests -p 'test_*.py'
 CHROME_PATH=/path/to/chrome npm run test:ui
-npm run check:compose # requires the Docker Compose plugin
+npm run check:compose # 需要 Docker Compose 插件
 ```
 
-Browser checks use synthetic fixtures; they do not control a real device. Live tests are separate opt-in scripts under `tests/`; configure your own device/URLs/secrets and review their effects before running them. Capture output is written under ignored `.local/`.
+浏览器测试使用模拟数据，不操作真实设备。`tests/` 下的实机测试需要主动选择运行；先配置自己的设备、地址和凭据，并审查其操作影响。测试截图及输出存放在被 Git 忽略的 `.local/` 中。
 
-## Limitations
+## 限制
 
-- Custom-drawn interfaces, protected video and some WebViews may not expose usable nodes or text actions.
-- Password fields are not mirrored. Text replacement does not synchronize Android cursor position, selection or IME composition.
-- An IME may interpret raw hardware keys; UHID is not a guarantee of literal Unicode text entry.
-- Clipboard reading can be empty or restricted by Android; the UI reports an unavailable result explicitly.
-- The UI tree and video have separate freshness indicators. Frame age and network round-trip time are not end-to-end capture latency.
-- Stable DOM/Android targets reduce churn but cannot guarantee the lifetime of an agent tool's own accessibility snapshot references.
-- A device action that already started cannot be rolled back when a script is cancelled.
+- 自绘界面、受保护视频和部分 WebView 可能不提供可用节点或文本操作。
+- 不镜像密码字段。文本替换不会同步安卓光标、选区或输入法组词状态。
+- 输入法可能解释原始硬件按键；UHID 不保证按字面输入 Unicode 文本。
+- 剪贴板可能为空，或受安卓权限限制；界面会明确报告不可用。
+- UI 树与视频分别标记新鲜度。末帧年龄和网络往返时间不等于端到端采集延迟。
+- 稳定 DOM/安卓目标可以减少引用变化，但不能保证智能体工具自身的无障碍快照引用始终有效。
+- 取消脚本无法撤销已经开始执行的设备动作。
 
-## Privacy and Security
+## 隐私与安全
 
-See [docs/SECURITY.md](docs/SECURITY.md). `.local/`, `.env`, certificates, device keys, captures, audit stores and site-specific deployment automation must stay private.
-Docker builds use an allowlisted context, and Git excludes runtime/private directories. Run `npm run check:publication` before committing or publishing.
+参见[安全与开源发布边界](docs/SECURITY.md)。`.local/`、`.env`、证书、设备密钥、截图录像、审计存储和特定站点部署脚本应保持私有。
+Docker 构建采用白名单上下文，Git 排除运行时和私有目录。提交或公开前运行 `npm run check:publication`。
 
-## License
+## 许可证
 
-Application code is MIT licensed. The unmodified vendored scrcpy 3.3.3 server is Apache-2.0 licensed; its license and attribution are retained in [vendor/README.md](vendor/README.md) and `vendor/scrcpy-LICENSE`. Dependency licenses remain their own; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+应用代码采用 MIT 许可证，保留 [LICENSE](LICENSE) 法律原文，并提供[中文参考译文](docs/LICENSE.zh-CN.md)。未修改的 scrcpy 3.3.3 服务端采用 Apache-2.0，其许可证和署名保存在 [vendor/README.md](vendor/README.md) 和 `vendor/scrcpy-LICENSE` 中。依赖仍遵循各自许可证，参见[第三方声明](THIRD_PARTY_NOTICES.md)。
+
+## 文档约定
+
+项目说明文档和配置注释统一使用中文。命令、代码标识、环境变量、协议字段、软件名称和 URL 保留原始写法；许可证法律原文保留，并与中文阅读说明区分。

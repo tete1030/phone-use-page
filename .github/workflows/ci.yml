@@ -1,4 +1,4 @@
-name: Checks
+name: 项目检查
 on:
   push:
   pull_request:
@@ -16,7 +16,7 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: '3.13'
-      - name: Check publication boundary
+      - name: 检查开源发布边界
         run: npm run check:publication
       - run: npm ci
       - run: pip install -r requirements.lock
@@ -26,7 +26,7 @@ jobs:
         env:
           PYTHON_PATH: python3
       - run: python3 -m unittest discover -s tests -p 'test_*.py'
-      - name: Install fixture browser
+      - name: 安装模拟测试浏览器
         run: |
           npx playwright install --with-deps chromium
           echo "CHROME_PATH=$(node --input-type=module -e 'import {chromium} from "playwright"; process.stdout.write(chromium.executablePath())')" >> "$GITHUB_ENV"

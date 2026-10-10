@@ -1,29 +1,29 @@
-# Security and Publication Boundaries
+# 安全与开源发布边界
 
-The public tree contains application code, generic Compose configuration, sanitized examples, synthetic tests and upstream license/attribution material.
+公开目录包含应用代码、通用 Compose 配置、去除真实环境数据的示例、模拟测试，以及上游许可证和署名材料。
 
-## Keep Private
+## 应保持私有的内容
 
-- `.local/` and `.env*` except `.env.example`.
-- Passwords, Cloudflare TURN tokens, coturn shared secrets, authentication/session stores and device ADB keys.
-- Actual device serials, personal hosts/IPs, certificate material, reverse-proxy/router configuration and deployment history.
-- Screenshots/video, packet captures, browser HAR files, audit logs and script execution output.
-- `deploy/`: local site automation is deliberately ignored and is not required to build the application.
+- `.local/` 和 `.env*`，但 `.env.example` 除外。
+- 密码、Cloudflare TURN token、coturn 共享密钥、鉴权/会话存储和设备 ADB 密钥。
+- 真实设备序列号、私人主机名/IP、证书材料、反向代理/路由器配置和部署历史。
+- 截图录像、抓包、浏览器 HAR、审计日志和脚本执行输出。
+- `deploy/`：特定站点的本地自动化目录已被忽略，构建应用不需要它。
 
-Examples contain reserved documentation domains/addresses and obvious placeholders. Credentials must be provided as private files or environment values; no default password is included.
+示例使用保留的文档域名/地址和明确的占位符。凭据必须通过私有文件或环境变量提供；项目不附带默认密码。
 
-## Before Publication
+## 公开前检查
 
-Run `npm run check:publication` after staging. It examines the staged Git blobs, rejects private paths, known credential formats, credential-bearing URLs and personal deployment markers, and verifies the official vendored binary checksum. It does not print matched credentials. The same check can run in CI.
+暂存修改后运行 `npm run check:publication`。它检查 Git 暂存区内容，拒绝私有路径、已知凭据格式、含用户名密码的 URL 和私有部署标记，并验证上游二进制的校验和。检查不会打印匹配到的凭据，同一检查也可在 CI 中运行。
 
-This is a guardrail, not a proof that any future arbitrary data is safe to publish. Review newly added captures and fixtures; do not bypass the check for production credentials. If a real secret is ever published, rotate it; deleting the current file does not remove old Git history.
+这项检查只能提供保护措施，无法保证今后加入的任意数据都适合公开。新增截图和测试数据应人工检查，不要为生产凭据绕过检查。若真实密钥被发布，应立即轮换；删除当前文件不会删除旧 Git 历史。
 
-## Runtime Controls
+## 运行时保护
 
-Passwords are verified with scrypt; authentication, Origin/CSRF checks and independent page-control tokens protect device operations. Only one control page can be active. Script execution uses a restricted QuickJS child process rather than browser/Node evaluation. Password fields are not mirrored; unique-target matching and native text readback avoid ambiguous writes.
+密码通过 scrypt 验证；鉴权、Origin/CSRF 检查和独立的页面控制令牌保护设备操作。同一时间只有一个控制页面在线。脚本在受限 QuickJS 子进程中执行。密码字段不会镜像；唯一目标匹配和手机端文本回读可避免不明确的写入。
 
-Raw events only confirm sending unless a defined effect has been verified. Some Android apps do not expose accessible/writable nodes; the console must not infer success from a generic event acknowledgment.
+原始事件回执只确认已发送，除非另有明确的效果验证。部分安卓应用不提供可访问、可写的节点，不能因为收到通用事件回执就认定动作生效。
 
-The HTTP process should be behind HTTPS for remote use. Keep ADB private, limit trusted proxies, protect private mounts and maintain TURN authentication/TLS and relay access rules for your own network.
+远程访问应将 HTTP 进程放在 HTTPS 代理后。保持 ADB 私有，限制可信代理范围，保护私有挂载，并根据自己的网络维护 TURN 鉴权、TLS 和中继访问规则。
 
-Do not include credentials, device data or private logs in public GitHub issues. Use a private channel for a vulnerability report involving nonpublic information.
+不要在公开 GitHub issue 中附带凭据、设备数据或私人日志。涉及非公开信息的漏洞报告应使用私密渠道。

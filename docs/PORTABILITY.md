@@ -1,29 +1,29 @@
-# Portability and Explicit Assumptions
+# 通用性与支持边界
 
-This project does not require a particular phone, router, NAS, DNS registrar or reverse-proxy product. The table distinguishes configurable choices from current implementation limits. A working setup on one device/network is not a compatibility guarantee for all others.
+本项目不要求特定手机、路由器、NAS、域名注册商或反向代理产品。下表区分可配置选项与当前实现限制：某台设备或某种网络配置运行成功，不代表所有环境都已获得兼容性保证。
 
-| Area | Supported choice / explicit limitation |
+| 方面 | 支持的选择与明确限制 |
 | --- | --- |
-| Phone identity | No bundled serial or model. A single authorized ADB device is selected automatically; choose `ANDROID_SERIAL` when ambiguous or when starting with a disconnected device. ADB TCP identifiers are accepted. One device per console process; use isolated instances for several phones. |
-| Android vendor/version | Uses ADB, scrcpy and UI Automator rather than a Xiaomi API. Android 5+ is scrcpy's baseline; UI Automator, lock detection, task dumps, clipboard, UHID and vendor security policies still need device testing. Unknown lock state blocks interaction rather than guessing. |
-| Screen size/orientation | Reads actual dimensions and rotation; does not substitute a particular phone's resolution if discovery fails. Coordinates are mapped to the actual video dimensions. Foldables/multi-display changes can invalidate an observation; reobserve. |
-| Unlocking | Wake/unlock requests only dismiss a keyguard that Android permits dismissing. PIN/password, biometrics, work-profile locks and enterprise policy are not bypassed. |
-| Text and IME | Accessible text replacement bypasses composition where Android supports it; raw hardware keys may still be interpreted by the IME. UHID availability is detected, with keycode fallback. Custom-drawn/WebView fields and password fields are not assumed writable. |
-| Language/apps | Console labels are currently Chinese; phone app labels can be any language. Select by live resource ID/package/unique accessible properties. A package, label or edit class is not guaranteed to exist on every device. The opt-in navigation live test is a Settings-specific scenario, not a universal certification. |
-| Device access | Local ADB server on loopback TCP 5037 for Node and Python. USB or an already authorized `adb connect` device can use that server. A remote ADB server/custom ADB server port is not currently an advertised configuration. ADB must remain private. |
-| Host OS | Native Linux/macOS shell workflow; clean CI runs on Linux. Windows users can use a Linux host/VM with verified USB access; native Windows scripts and Docker Desktop USB are not covered by the provided setup. macOS native ADB does not need udev. |
-| Docker/users | Provided USB Compose uses Linux host networking and `/dev/bus/usb`. UID, GID and actual USB access group are supplied, not assumed to be 1000/46 or `plugdev`. Non-Linux NAS/VM/container managers need equivalent mounts/permissions; no DockerMan or Unraid API is required. |
-| CPU/dependencies | Native H.264 phone encoder and FFmpeg software encoding are distinct. WSS adaptation can be disabled. Docker image/dependency availability for another architecture must be checked; Linux x86 CI does not certify ARM, GPU or all NAS platforms. |
-| Browser/agent | Current Chromium with H.264 WebCodecs for WSS and H.264 WebRTC decoding for RTC. A screenshot-only agent cannot use `fill` on a video; a DOM-capable agent can fill the real phone textbox. Browsers may restrict TURN or direct UDP independently of ordinary HTTPS. |
-| DNS/TLS | Any DNS provider/registrar and trusted certificate source for an ordinary reverse proxy or self-hosted TURN. Certificate names, chain and renewal must match your own hostnames. Cloudflare TURN does not require moving your console's DNS to Cloudflare. Cloudflare Tunnel is a separate optional product with its own domain requirements. |
-| HTTPS/proxy | Any proxy that preserves Host, original scheme and WebSocket upgrades. Exact public origin, base/cookie path and explicit trusted proxy IPs/CIDRs are configured. Arbitrary LAN HTTP is deliberately not advertised; use HTTPS or localhost forwarding. |
-| Network topology | No router brand, port-forward API, public IPv4 or inbound 80/443 assumption. WSS-only works through an HTTPS proxy/tunnel without TURN ports. Self-hosted TURN needs real reachability; STUN does not defeat every NAT/CGNAT/firewall. |
-| IPv4/IPv6 | Current server WebRTC candidates use IPv4; manual public-address advertisement accepts IPv4 only. Console HTTP/proxy and DNS choices do not turn this into an IPv6 media implementation. IPv6-only users should verify a compatible relay/proxy path or use WSS. |
-| TURN | Independently disable WebRTC/relays and use WSS only. Self-hosted integration currently supports TLS-over-TCP plus coturn REST HMAC credentials; arbitrary commercial TURN/static-user authentication or non-TLS URLs are not interchangeable. Cloudflare integration filters to its TLS-over-TCP 443 URL. |
-| Relay priority | When both are configured, self-hosted TURN precedes Cloudflare, then WSS. Without TURN, direct WebRTC precedes WSS. Auto probes only enabled paths; manual selection is restored only if still enabled. Disabled WebRTC makes no STUN/TURN credential calls or ICE sockets. |
-| Secrets/state | Operator-owned private files/env; no shared credentials. Persistent auth/task/audit/power state and ADB keys are not interchangeable between devices/instances. Secret file ownership/readability must match the actual runtime user. |
-| Authentication/users | Shared fixed-password console with persistent sessions, not a multiuser identity/role system. Audit identifies session/client/IP; it cannot infer a person's identity behind the shared password or NAT. External SSO is optional and must remain compatible with your agent's browser. |
-| Power/task duration | Stay-awake relies on Android accepting the setting and USB/AC power. Five minutes without explicit page/script interaction disconnects; heartbeat/automatic observations do not extend it. Screen-off pauses media, but live connection keepalives still use some bandwidth. |
-| Billing/performance | WSS uses proxy/tunnel bandwidth and host CPU; TURN can bill both send/receive legs and probes. No built-in universal monetary hard cap, latency SLA or unlimited bandwidth assumption. Billing alerts are not spend limits. |
+| 设备标识 | 不内置序列号或型号。自动选择单台已授权 ADB 设备；有歧义或设备未连接时启动，应设置 `ANDROID_SERIAL`。接受 ADB TCP 标识。每个控制台进程管理一台设备，多手机需使用隔离实例。 |
+| 安卓厂商与版本 | 使用 ADB、scrcpy 和 UI Automator，不依赖小米 API。Android 5+ 是 scrcpy 的基础要求；UI Automator、锁屏检测、任务信息、剪贴板、UHID 和厂商安全策略仍需实机验证。锁屏状态未知时阻止交互，不猜测。 |
+| 屏幕尺寸与方向 | 读取真实尺寸和旋转信息；获取失败时不会代入某个手机的分辨率。坐标映射到实际视频尺寸。折叠屏、多显示器切换可能使观察结果失效，应重新观察。 |
+| 解锁 | 唤醒/解锁请求只解除安卓允许解除的锁屏，不绕过 PIN、密码、生物识别、工作资料锁或企业策略。 |
+| 文本与输入法 | 安卓支持时，无障碍文本替换可绕开组词；原始硬件按键仍可能被输入法解释。探测 UHID 可用性，不支持时回退到 keycode。不假定自绘/WebView 输入框或密码字段可写。 |
+| 语言与应用 | 控制台为中文，手机应用标签可使用任意语言。根据实时资源 ID、包名或唯一无障碍属性选择目标。不保证某个包、标签或输入控件类在所有设备上都存在。可选的导航实机测试针对系统设置场景，不是通用兼容性认证。 |
+| 设备访问 | Node 和 Python 使用回环 TCP 5037 上的本地 ADB 服务。USB 或已授权的 `adb connect` 设备可使用该服务。目前不对外承诺远程 ADB 服务或自定义 ADB 服务端口配置。ADB 应保持私有。 |
+| 主机系统 | 提供原生 Linux/macOS shell 流程，干净环境 CI 在 Linux 上运行。Windows 用户可使用已确认 USB 访问的 Linux 主机/虚拟机；提供的安装方案不涵盖原生 Windows 脚本及 Docker Desktop USB。macOS 原生 ADB 不需要 udev。 |
+| Docker 与用户 | USB Compose 使用 Linux 主机网络和 `/dev/bus/usb`。UID、GID 及 USB 访问组按实际环境提供，不假定为 1000/46 或 `plugdev`。非 Linux NAS、虚拟机或容器管理器需提供等效挂载和权限；不需要 DockerMan 或 Unraid API。 |
+| CPU 与依赖 | 手机原生 H.264 编码与主机 FFmpeg 软件编码是不同环节，可以关闭 WSS 自适应编码。其他架构的镜像/依赖可用性需自行验证；Linux x86 CI 不代表已验证 ARM、GPU 或所有 NAS 平台。 |
+| 浏览器与智能体 | WSS 需要支持 H.264 WebCodecs 的较新 Chromium，WebRTC 需要 H.264 解码。只看截图的智能体不能在视频上调用 `fill`；能操作 DOM 的智能体可填写真实手机文本框。浏览器可能单独限制 TURN 或 UDP 直连，即使普通 HTTPS 可用。 |
+| DNS 与 TLS | 普通反向代理和自建 TURN 可使用任意 DNS/注册商及可信证书来源。证书名称、链和续期要匹配自己的主机名。Cloudflare TURN 不要求将控制台 DNS 迁移至 Cloudflare。Cloudflare Tunnel 是独立可选产品，有自己的域名要求。 |
+| HTTPS 与代理 | 可使用任何正确保留 Host、原始协议和 WebSocket 升级的代理。需配置精确公网 origin、基础/ Cookie 路径及明确的可信代理 IP/CIDR。不将任意局域网 HTTP 视为支持的远程访问入口；使用 HTTPS 或 localhost 转发。 |
+| 网络拓扑 | 不假定路由器品牌、端口转发 API、公网 IPv4 或入站 80/443 可用。仅 WSS 可通过 HTTPS 代理/隧道工作，不需要 TURN 端口。自建 TURN 需真实可达；STUN 无法解决所有 NAT、CGNAT 或防火墙限制。 |
+| IPv4 与 IPv6 | 当前服务端 WebRTC 候选使用 IPv4，手动公网地址声明只接受 IPv4。HTTP、代理或 DNS 支持 IPv6，不等于已实现 IPv6 媒体。仅 IPv6 用户应验证兼容的中继/代理通道，或使用 WSS。 |
+| TURN | 可以关闭 WebRTC/中继，仅保留 WSS。自建集成目前支持 TLS/TCP 和 coturn REST HMAC 凭据；任意商业 TURN、静态用户鉴权或非 TLS URL 不能直接替换。Cloudflare 集成只选择其 TLS/TCP 443 URL。 |
+| 中继优先级 | 同时配置两种 TURN 时，自建 TURN 优先于 Cloudflare，再其次为 WSS。未配置 TURN 时，WebRTC 直连优先于 WSS。自动模式只探测已启用通道；手动选择只有仍可用时才恢复。关闭 WebRTC 后不创建 STUN/TURN 请求或 ICE socket。 |
+| 密钥与状态 | 使用部署者拥有的私有文件/环境变量，不附带默认共用凭据。持久鉴权、任务、审计、电源状态和 ADB 密钥不能在设备/实例之间随意混用。密钥文件所有者和读取权限需匹配实际运行用户。 |
+| 鉴权与用户 | 当前是共享固定密码与持久会话，不是多用户身份/角色系统。审计可识别会话、客户端和 IP，不能仅凭共享密码或 NAT 推断访问者身份。外部 SSO 可选，需保证智能体浏览器能完成其流程。 |
+| 电源与任务时长 | 保持亮屏依赖安卓接受设置，以及 USB/交流电供电。五分钟没有显式页面/脚本操作会断连，心跳和自动观察不延长时限。灭屏暂停媒体帧，但连接保活仍消耗少量流量。 |
+| 计费与性能 | WSS 消耗代理/隧道带宽和主机 CPU；TURN 的收发两端及探测可能计费。不内置通用金额硬上限，也不承诺延迟 SLA 或无限带宽。账单预警不是支出上限。 |
 
-Remaining extension points include remote/custom-port ADB with consistent configuration across all three ADB clients, validated IPv6 media, additional TURN authentication/transports, multiuser permissions, UI localization and host/container-specific recipes. They should be implemented and tested as separate capabilities, not implied by generic examples.
+后续可扩展：在全部三个 ADB 客户端中一致配置远程/自定义端口 ADB、经过验证的 IPv6 媒体、其他 TURN 鉴权/传输、多用户权限、界面多语言及针对不同主机/容器的部署方案。这些能力应单独实现和验证，不能仅凭通用示例暗示已经支持。

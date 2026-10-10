@@ -1,11 +1,15 @@
-# Third-Party Notices
+# 第三方声明
 
-The application source is licensed under the MIT license in LICENSE.
+应用源码采用 [LICENSE](LICENSE) 中的 MIT 许可证，另附[中文参考译文](docs/LICENSE.zh-CN.md)。
 
-## scrcpy
+## scrcpy 服务端
 
-The vendored scrcpy 3.3.3 server is an unmodified official release by Genymobile and scrcpy contributors, licensed under Apache License 2.0. Its full license is retained in vendor/scrcpy-LICENSE. Source, binary URL and checksum are documented in vendor/README.md. The application MIT license does not replace its upstream license.
+随项目附带的 scrcpy 3.3.3 服务端是 Genymobile 和 scrcpy 贡献者发布的、未经修改的官方二进制，采用 Apache License 2.0。完整上游许可证保存在 `vendor/scrcpy-LICENSE`；源码、二进制地址和校验和见 [vendor/README.md](vendor/README.md)。应用的 MIT 许可证不会替代上游许可证。
 
-## Installed Dependencies
+## 已安装依赖
 
-JavaScript and Python dependencies are pinned in package-lock.json and requirements.lock. They remain under their upstream licenses. Installed packages and container distributions retain their license files; dependency and operating-system licenses are not relicensed by this repository.
+JavaScript 和 Python 依赖分别锁定在 `package-lock.json` 和 `requirements.lock` 中，仍遵循各自上游许可证。已安装包和容器发行版保留相应许可证文件；本仓库不会重新授权依赖或操作系统组件。
+
+## 法律原文
+
+为完整保留授权条款，`LICENSE` 和 `vendor/scrcpy-LICENSE` 保留法律原文。项目编写的说明文档使用中文；中文译文用于阅读参考，以对应法律原文为准。
