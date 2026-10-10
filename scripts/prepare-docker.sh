@@ -5,7 +5,8 @@ umask 077
 python3 - <<'PY'
 from pathlib import Path
 import os,shutil,stat
-uid=int(os.environ.get('CONSOLE_UID',1000))
+uid=int(os.environ.get('CONSOLE_UID',os.getuid()))
+gid=int(os.environ.get('CONSOLE_GID',os.getgid()))
 if os.getuid()!=uid:
     raise SystemExit('CONSOLE_UID must match your user; export it before preparing and set it in compose.env')
 for name in ['.local','.local/docker/state','.local/docker/home/.android']:
@@ -25,6 +26,8 @@ if password.stat().st_uid!=uid or stat.S_IMODE(password.stat().st_mode)!=0o600:
 if not 12<=len(password.read_text().rstrip('\r\n'))<=512:raise SystemExit('Password must be 12-512 characters')
 config=Path('.local/compose.env')
 if not config.exists():
-    shutil.copyfile('compose.env.example',config);config.chmod(0o600)
-print('Private deployment directories and compose.env prepared; secrets were not displayed')
+    contents=Path('compose.env.example').read_text()
+    contents=contents.replace('CONSOLE_UID=\n',f'CONSOLE_UID={uid}\n').replace('CONSOLE_GID=\n',f'CONSOLE_GID={gid}\n')
+    config.write_text(contents);config.chmod(0o600)
+print('Private deployment directories and compose.env prepared; set ANDROID_USB_GID to the USB access group GID; secrets were not displayed')
 PY

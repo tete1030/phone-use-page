@@ -49,7 +49,7 @@ export class TurnCredentials {
   get tlsServerName(){return this.config.provider==='coturn'?this.config.serverName:'turn.cloudflare.com';}
   async prepare(owner:string,signal:AbortSignal){
     if(signal.aborted)throw offline();
-    if(this.config.provider==='none')return {configId:'direct',expiresAt:null,iceServers:[{urls:this.stunUrl}] as IceServer[],iceTransportPolicy:'all' as const};
+    if(this.config.provider==='none')return {configId:'direct',expiresAt:null,iceServers:this.stunServers(),iceTransportPolicy:'all' as const};
     let entry=this.entries.get(owner);
     if(!entry){
       const controller=new AbortController();
@@ -72,12 +72,13 @@ export class TurnCredentials {
     return {configId:bundle.configId,expiresAt:bundle.expiresAt,iceServers:this.servers(bundle.browser),iceTransportPolicy:this.config.mode};
   }
   server(owner:string,configId:string|undefined){
-    if(this.config.provider==='none')return [{urls:this.stunUrl}] as IceServer[];
+    if(this.config.provider==='none')return this.stunServers();
     const bundle=this.entries.get(owner)?.bundle;
     if(!bundle||bundle.configId!==configId||bundle.expiresAt-this.now()<30000)throw new ConsoleError('ICE_CONFIG_EXPIRED','视频配置已过期，请重新连接视频',409);
     return this.servers(bundle.server);
   }
-  private servers(credential:Credential):IceServer[]{return this.config.mode==='relay'?[credential]:[{urls:this.stunUrl},credential];}
+  private stunServers():IceServer[]{return this.stunUrl?[{urls:this.stunUrl}]:[];}
+  private servers(credential:Credential):IceServer[]{return this.config.mode==='relay'?[credential]:[...this.stunServers(),credential];}
   release(owner?:string){
     for(const [id,entry]of this.entries){if(owner&&id!==owner)continue;this.entries.delete(id);entry.signal.removeEventListener('abort',entry.abort);entry.controller.abort();if(entry.bundle)void this.revokeBundle(entry.bundle);}
   }

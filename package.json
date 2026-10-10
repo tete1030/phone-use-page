@@ -10,13 +10,14 @@
     "build": "tsc --noEmit && node scripts/build.mjs",
     "start": "node --env-file-if-exists=.env dist/server.js",
     "dev": "tsx src/server.ts",
-    "test": "node --import tsx tests/core.test.ts && npm run test:auth && npm run test:webrtc",
+    "test": "node --import tsx tests/core.test.ts && npm run test:auth && npm run test:webrtc && node --import tsx tests/setup.test.ts",
     "check": "tsc --noEmit",
     "test:auth": "node --import tsx tests/auth.test.ts",
     "test:webrtc": "node --import tsx tests/webrtc.test.ts && node --import tsx tests/turn.test.ts && node --import tsx tests/turn-fallback.test.ts && node --import tsx tests/wss.test.ts && node --import tsx tests/video-race.test.ts && node --import tsx tests/wss-encoder.test.ts && node --import tsx tests/video-freshness.test.ts && node --import tsx tests/session-keyboard.test.ts",
     "test:webrtc:live": "PHONE_LIVE_TEST=1 node tests/webrtc-live.mjs",
     "test:ui": "node --import tsx tests/ui-interactions.mjs && node --import tsx tests/agent-ui.mjs",
-    "check:publication": "python3 scripts/check-publication.py"
+    "check:publication": "python3 scripts/check-publication.py",
+    "check:compose": "python3 scripts/check-compose.py"
   },
   "keywords": [],
   "author": "",

@@ -21,6 +21,7 @@ jobs:
       - run: npm ci
       - run: pip install -r requirements.lock
       - run: npm run build
+      - run: npm run check:compose
       - run: npm test
         env:
           PYTHON_PATH: python3

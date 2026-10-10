@@ -48,6 +48,18 @@ class BridgeTests(unittest.TestCase):
         bridge.device = self.device
         bridge.power_cache['at'] = 0
 
+    def test_display_dimensions_use_native_fallback_instead_of_a_phone_model_default(self):
+        self.device.info = {'displayRotation': 1}
+        self.device.window_size = lambda: (1280, 720)
+        result = bridge.tree()
+        self.assertEqual((result['width'], result['height']), (1280, 720))
+
+    def test_unavailable_display_dimensions_are_explicitly_rejected(self):
+        self.device.info = {}
+        self.device.window_size = lambda: (0, 0)
+        with self.assertRaisesRegex(RuntimeError, 'display size'):
+            bridge.tree()
+
     def test_editing_keeps_node_identity_but_invalidates_old_action_signature(self):
         first = bridge.tree()['nodes'][-1]
         self.device.text = '更新文本'

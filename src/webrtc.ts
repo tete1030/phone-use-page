@@ -9,20 +9,24 @@ import {turnConfig,TurnCredentials} from './turn-credentials.js';
 import {TurnFallback,type TurnProvider} from './turn-fallback.js';
 
 export function rtcConfig(env:NodeJS.ProcessEnv){
+  for(const flag of ['WEBRTC_ENABLED','VIDEO_WSS_FALLBACK'])if(env[flag]&&!['0','1'].includes(env[flag]!))throw new Error(`${flag} must be 0 or 1`);
+  const enabled=env.WEBRTC_ENABLED!=='0',wssFallback=env.VIDEO_WSS_FALLBACK==='1';
+  if(!enabled&&!wssFallback)throw new Error('Enable at least one video transport: WEBRTC_ENABLED=1 or VIDEO_WSS_FALLBACK=1');
+  // Disabled WebRTC must neither require relay secrets nor contact STUN/TURN.
+  if(!enabled)env={WEBRTC_STUN_URL:''};
   const min=Number(env.WEBRTC_PORT_MIN||50000),max=Number(env.WEBRTC_PORT_MAX||50031);
   if(!Number.isInteger(min)||!Number.isInteger(max)||min<1024||max>65535||max<=min||max-min>255)throw new Error('Invalid WEBRTC_PORT_MIN/MAX (2-256 UDP ports, 1024-65535)');
   const publicIp=env.WEBRTC_PUBLIC_IP;
   if(publicIp&&isIP(publicIp)!==4)throw new Error('WEBRTC_PUBLIC_IP must be an IPv4 address');
   const stunUrl=env.WEBRTC_STUN_URL??'stun:stun.cloudflare.com:3478';
   const match=/^stun:([A-Za-z0-9.-]+):(\d+)$/.exec(stunUrl);
-  if(!match||Number(match[2])<1||Number(match[2])>65535)throw new Error('WEBRTC_STUN_URL must be a STUN hostname and UDP port; TURN is not enabled');
+  if(stunUrl&&(!match||Number(match[2])<1||Number(match[2])>65535))throw new Error('WEBRTC_STUN_URL must be empty or a STUN hostname and UDP port');
   const gatherMs=Number(env.WEBRTC_ICE_GATHER_MS||8000);
   if(!Number.isInteger(gatherMs)||gatherMs<3000||gatherMs>20000)throw new Error('WEBRTC_ICE_GATHER_MS must be 3000-20000');
   const turn=turnConfig(env),fallbackProvider=env.WEBRTC_TURN_FALLBACK;
   if(fallbackProvider&&(fallbackProvider!=='cloudflare'||turn.provider!=='coturn'||turn.mode!=='relay'))throw new Error('Cloudflare fallback requires primary coturn relay mode');
   const fallbackTurn=fallbackProvider?turnConfig({...env,WEBRTC_TURN_PROVIDER:'cloudflare'}):undefined;
-  if(env.VIDEO_WSS_FALLBACK&&!['0','1'].includes(env.VIDEO_WSS_FALLBACK))throw new Error('VIDEO_WSS_FALLBACK must be 0 or 1');
-  return {portRange:[min,max] as [number,number],publicIp,stunUrl,gatherMs,turn,fallbackTurn,wssFallback:env.VIDEO_WSS_FALLBACK==='1'};
+  return {enabled,portRange:[min,max] as [number,number],publicIp,stunUrl,gatherMs,turn,fallbackTurn,wssFallback};
 }
 
 export function advertisePublicAddress(sdp:string,ip:string){
@@ -37,10 +41,10 @@ export class WebRtcVideo {
   private paused=false;
   private pauseReason:string|null=null;
   constructor(private video:Video,readonly config=rtcConfig(process.env),primary=new TurnCredentials(config.turn,config.stunUrl),fallback?:TurnCredentials){this.credentials=new TurnFallback(primary,fallback);if(!!config.fallbackTurn!==!!fallback)throw new Error('TURN fallback broker configuration mismatch');}
-  private get transports(){return [...this.credentials.providers,...(this.config.wssFallback?['wss' as const]:[])];}
+  private get transports(){return [...(this.config.enabled?this.credentials.providers:[]),...(this.config.wssFallback?['wss' as const]:[])];}
   get browserConfig(){return {dynamic:true,gatherMs:this.config.gatherMs+4000,provider:this.config.turn.provider,availableProviders:this.transports};}
   setVideoPaused(paused:boolean,reason:string|null=null){this.video.setVideoPaused(paused,reason);const changed=this.paused!==paused;this.paused=paused;this.pauseReason=paused?reason:null;if(changed)this.active?.powerChanged();}
-  async prepare(owner:string,signal:AbortSignal,provider?:TurnProvider){const requested=provider??this.config.turn.provider;if(!this.credentials.providers.includes(requested))throw new ConsoleError('TURN_PROVIDER_DISABLED','该中继服务未启用',400);this.video.closeViewers();if(requested!==this.credentials.provider(owner))await this.closeActive(owner);const prepared=await this.credentials.prepare(owner,signal,requested);return {...prepared,availableProviders:this.transports,renewAfterMs:prepared.expiresAt===null?null:Math.max(30000,prepared.expiresAt-Date.now()-300000),gatherMs:requested==='cloudflare'?Math.max(45000,this.config.gatherMs+4000):this.config.gatherMs+4000};}
+  async prepare(owner:string,signal:AbortSignal,provider?:TurnProvider){const requested=provider??this.config.turn.provider;if(!this.config.enabled||!this.credentials.providers.includes(requested))throw new ConsoleError('TURN_PROVIDER_DISABLED','该视频通道未启用',400);this.video.closeViewers();if(requested!==this.credentials.provider(owner))await this.closeActive(owner);const prepared=await this.credentials.prepare(owner,signal,requested);return {...prepared,availableProviders:this.transports,renewAfterMs:prepared.expiresAt===null?null:Math.max(30000,prepared.expiresAt-Date.now()-300000),gatherMs:requested==='cloudflare'?Math.max(45000,this.config.gatherMs+4000):this.config.gatherMs+4000};}
   async diagnostics(owner:string){if(this.video.viewers.size)return {...this.video.wssDiagnostics(),availableProviders:this.transports};const active=this.active;if(!active||active.owner!==owner)return {state:'idle',stun:this.config.stunUrl,turn:this.config.turn.provider!=='none',mode:this.config.turn.mode,provider:this.credentials.provider(owner),availableProviders:this.transports,paused:this.paused,pauseReason:this.pauseReason};return active.diagnostics();}
   async close(owner?:string){this.credentials.release(owner);await this.closeActive(owner);}
   private async closeActive(owner?:string){const active=this.active;if(active&&(!owner||active.owner===owner)){this.active=undefined;await active.close();}}
@@ -48,6 +52,7 @@ export class WebRtcVideo {
     const work=this.tail.then(()=>this.negotiate(owner,sdp,signal,configId));this.tail=work.catch(()=>{});return work;
   }
   private async negotiate(owner:string,sdp:string,signal:AbortSignal,configId?:string){
+    if(!this.config.enabled)throw new ConsoleError('TURN_PROVIDER_DISABLED','WebRTC 未启用',400);
     if(signal.aborted)throw new ConsoleError('PAGE_OFFLINE','页面已离线',409);
     if((sdp.match(/^m=/gm)||[]).length!==1||!/^m=video /m.test(sdp))throw new ConsoleError('INVALID_SDP','仅支持一个视频接收通道');
     const iceServers=this.credentials.server(owner,configId);

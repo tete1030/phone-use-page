@@ -15,7 +15,7 @@ export class ParallelWebRtcVideo {
   private credentials:TurnFallback;private paused=false;private pauseReason:string|null=null;
   constructor(private video:Video,readonly config=rtcConfig(process.env),primary=new TurnCredentials(config.turn,config.stunUrl),fallback?:TurnCredentials){this.credentials=new TurnFallback(primary,fallback);}
   private key(owner:string,id:string){return owner+':'+id;}
-  private get providers(){return [...this.credentials.providers,...(this.config.wssFallback?['wss' as const]:[])];}
+  private get providers(){return [...(this.config.enabled?this.credentials.providers:[]),...(this.config.wssFallback?['wss' as const]:[])];}
   get browserConfig(){return {dynamic:true,parallel:true,provider:this.config.turn.provider,availableProviders:this.providers};}
   setVideoPaused(paused:boolean,reason:string|null=null){const changed=this.paused!==paused;this.paused=paused;this.pauseReason=paused?reason:null;this.video.setVideoPaused(paused,reason);if(changed)for(const a of this.attempts.values())a.activate?.();}
   private create(owner:string,id:string,provider:Attempt['provider'],parent:AbortSignal){
@@ -27,7 +27,7 @@ export class ParallelWebRtcVideo {
     const a:Attempt={owner,id,key,provider,parent,abort,unlink};this.attempts.set(key,a);parent.addEventListener('abort',cancel,{once:true});return a;
   }
   async prepare(owner:string,signal:AbortSignal,provider?:TurnProvider,attemptId='legacy'){
-    const chosen=provider??this.config.turn.provider;if(!this.credentials.providers.includes(chosen))throw new ConsoleError('TURN_PROVIDER_DISABLED','通道未配置',400);
+    const chosen=provider??this.config.turn.provider;if(!this.config.enabled||!this.credentials.providers.includes(chosen))throw new ConsoleError('TURN_PROVIDER_DISABLED','通道未配置',400);
     const key=this.key(owner,attemptId),previous=this.attempts.get(key);if(previous&&previous.provider!==chosen&&attemptId==='legacy'){await this.cancel(owner,attemptId);this.cancelled.delete(key);}
     const a=this.create(owner,attemptId,chosen,signal);
     try{const prepared=await this.credentials.prepare(a.key,a.abort.signal,chosen);if(this.attempts.get(a.key)!==a)throw new Error('cancelled');
@@ -37,7 +37,7 @@ export class ParallelWebRtcVideo {
   async cancel(owner:string,id:string){const key=this.key(owner,id);this.cancelled.set(key,Date.now());for(const [k,t]of this.cancelled)if(Date.now()-t>600000||this.cancelled.size>5000)this.cancelled.delete(k);
     const a=this.attempts.get(key);if(!a)return;this.attempts.delete(key);a.unlink();a.abort.abort();this.credentials.release(a.key);if(this.selected.get(owner)===id)this.selected.delete(owner);a.ws?.close();await a.close?.();}
   async close(owner?:string){await Promise.all([...this.attempts.values()].filter(a=>!owner||a.owner===owner).map(a=>this.cancel(a.owner,a.id)));}
-  registerWss(owner:string,id:string,parent:AbortSignal,ws:WebSocket){const a=this.create(owner,id,'wss',parent);a.ws=ws;ws.once('close',()=>{void this.cancel(owner,id);});}
+  registerWss(owner:string,id:string,parent:AbortSignal,ws:WebSocket){if(!this.config.wssFallback)throw new ConsoleError('VIDEO_TRANSPORT_DISABLED','WSS 未启用',400);const a=this.create(owner,id,'wss',parent);a.ws=ws;ws.once('close',()=>{void this.cancel(owner,id);});}
   select(owner:string,id:string){const a=this.attempts.get(this.key(owner,id));if(!a)throw new ConsoleError('ICE_CONFIG_EXPIRED','视频探测已取消',409);
     if(this.selected.get(owner)!==id){this.selected.set(owner,id);for(const candidate of this.attempts.values())if(candidate.owner===owner)candidate.activate?.();}return {provider:a.provider,attemptId:id};}
   async diagnostics(owner:string){const a=this.attempts.get(this.key(owner,this.selected.get(owner)||''));

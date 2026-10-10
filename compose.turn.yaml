@@ -1,6 +1,7 @@
 services:
   console:
     environment:
+      WEBRTC_ENABLED: "1"
       WEBRTC_TURN_PROVIDER: cloudflare
       WEBRTC_ICE_MODE: ${WEBRTC_ICE_MODE:-relay}
       CF_TURN_KEY_FILE: /run/secrets/cloudflare-turn-key

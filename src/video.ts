@@ -11,6 +11,14 @@ import { ConsoleError } from './types.js';
 import {HardwareKeyboard} from './hardware-keyboard.js';
 import {WssEncoder} from './wss-encoder.js';
 
+export function videoEncodingConfig(env:NodeJS.ProcessEnv){
+  const maxSize=Number(env.VIDEO_MAX_SIZE||1920),maxFps=Number(env.VIDEO_MAX_FPS||30),videoBitRate=Number(env.VIDEO_BIT_RATE||4_000_000);
+  if(!Number.isInteger(maxSize)||(maxSize!==0&&(maxSize<256||maxSize>4096)))throw new Error('VIDEO_MAX_SIZE must be 0 (uncapped) or 256-4096');
+  if(!Number.isInteger(maxFps)||maxFps<1||maxFps>60)throw new Error('VIDEO_MAX_FPS must be 1-60');
+  if(!Number.isInteger(videoBitRate)||videoBitRate<128000||videoBitRate>20000000)throw new Error('VIDEO_BIT_RATE must be 128000-20000000');
+  return {maxSize,maxFps,videoBitRate};
+}
+
 export class Video extends EventEmitter {
   client?: AdbScrcpyClient<AdbScrcpyOptions3_3_3<true>>;
   width = 0; height = 0; codec = 0; frames = 0; bytes = 0;
@@ -38,7 +46,7 @@ export class Video extends EventEmitter {
     const binary = await readFile('vendor/scrcpy-server-v3.3.3');
     if(createHash('sha256').update(binary).digest('hex')!=='7e70323ba7f259649dd4acce97ac4fefbae8102b2c6d91e2e7be613fd5354be0')throw new Error('Vendored scrcpy server checksum mismatch');
     await AdbScrcpyClient.pushServer(adb, new ReadableStream({start(c){c.enqueue(new Uint8Array(binary));c.close();}}), '/data/local/tmp/android-console-scrcpy.jar');
-    const options = new AdbScrcpyOptions3_3_3({video:true,audio:false,control:true,videoCodec:'h264',videoCodecOptions:'profile=1,level=4096,i-frame-interval=2,max-bframes=0',maxSize:1920,maxFps:30,videoBitRate:4_000_000,tunnelForward:true,powerOn:process.env.KEEP_SCREEN_ON==='1',stayAwake:process.env.KEEP_SCREEN_ON==='1',clipboardAutosync:false,logLevel:'warn'});
+    const options = new AdbScrcpyOptions3_3_3({video:true,audio:false,control:true,videoCodec:'h264',videoCodecOptions:'profile=1,level=4096,i-frame-interval=2,max-bframes=0',...videoEncodingConfig(process.env),tunnelForward:true,powerOn:process.env.KEEP_SCREEN_ON==='1',stayAwake:process.env.KEEP_SCREEN_ON==='1',clipboardAutosync:false,logLevel:'warn'});
     const client = await AdbScrcpyClient.start(adb, '/data/local/tmp/android-console-scrcpy.jar', options);
     this.client = client;
     try{const hardware=new HardwareKeyboard(client.controller!);await hardware.create();this.hardware=hardware;this.keyboardBackend='uhid_pending';}catch{this.keyboardBackend='keycode';}

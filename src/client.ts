@@ -43,13 +43,14 @@ async function initialize() {
   let meta={width:0,height:0,codec:0};
   let networkInfo:unknown=null,networkLoading=false;
   let videoProvider:VideoProvider|undefined;
-  const providerName=(provider:VideoProvider|undefined)=>provider==='coturn'?'Home TURN':provider==='cloudflare'?'Cloudflare TURN':provider==='wss'?'WSS':'WebRTC';
+  const providerName=(provider:VideoProvider|undefined)=>provider==='coturn'?'自建 TURN':provider==='cloudflare'?'Cloudflare TURN':provider==='wss'?'WSS':'直连 WebRTC';
   const videoPaused=()=>!observation.powerCollectedAt||!observation.screenOn||observation.locked!==false;
   const videoPauseReason=()=>!observation.powerCollectedAt?'power_unknown':!observation.screenOn?'screen_off':observation.locked!==false?'locked':null;
   let videoManager:ReturnType<typeof createVideoManager>|null=null;
   let lastDisplayedFrameAt:number|null=null,frameRequiredAfter=0,previousVideoPaused=true;
   const savedMode=localStorage.getItem('android-video-mode');
-  let videoMode:VideoMode=savedMode&&['auto','coturn','cloudflare','wss'].includes(savedMode)?savedMode as VideoMode:'auto';
+  const videoProviders:VideoProvider[]=boot.webrtc?.availableProviders||['none'];
+  let videoMode:VideoMode=savedMode&&(savedMode==='auto'||videoProviders.includes(savedMode as VideoProvider))?savedMode as VideoMode:'auto';
   const canvas=q<HTMLVideoElement>('.video-canvas'),phone=q<HTMLButtonElement>('.phone'),editor=q<HTMLTextAreaElement>('.code-input'),text=q<HTMLTextAreaElement>('.text-input');
   const proxy=q<HTMLTextAreaElement>('.screen-proxy');let bindingBusy=false,lastBindAttempt=0;
   const wssCanvas=q<HTMLCanvasElement>('.wss-canvas');
@@ -63,6 +64,7 @@ async function initialize() {
   function fit(){app.style.transform='none';root.style.width='100%';root.style.height=innerHeight+'px';fitPhone();}
   addEventListener('resize',fit);
   function fitPhone(){const stage=q<HTMLElement>('.phone-stage');const ratio=meta.width&&meta.height?meta.width/meta.height:observation.width/observation.height;
+    if(!Number.isFinite(ratio)||ratio<=0)return;
     app.style.setProperty('--phone-column',Math.min(innerWidth*.46,(innerHeight-52)*ratio+16)+'px');
     const height=Math.min(stage.clientHeight-6,(stage.clientWidth-6)/ratio)*(phonePane.classList.contains('enlarged')?1.35:1);phone.style.height=height+'px';phone.style.width=height*ratio+'px';positionProxy();}
   function positionProxy(){const n=observation.focus,visible=bindValid()&&!!n&&!waking;proxy.hidden=!visible||!!meta.width&&Math.abs(meta.width/meta.height-observation.width/observation.height)>.04;
@@ -252,7 +254,7 @@ async function initialize() {
   };events.onclose=event=>{if(online&&epoch===connectionEpoch)goOffline(offlineReason(event.reason));};}
   function ensureVideoManager(){
     if(videoManager)return;
-    videoManager=createVideoManager({providers:(boot.webrtc?.availableProviders||['coturn']),container:phone,paused:videoPaused,
+    videoManager=createVideoManager({providers:videoProviders,container:phone,paused:videoPaused,
       request:api,url:(path,id)=>{const value=new URL(url(path));value.searchParams.set('attemptId',id);return value.toString();},
       selected:()=>renderVideoState(),frame:()=>renderVideoState(),changed:()=>renderVideoState()});
     canvas.style.visibility='hidden';wssCanvas.hidden=true;
@@ -277,9 +279,9 @@ async function initialize() {
       videoBytes:String(media.bytesReceived||0),videoPackets:String(media.packetsReceived||0),videoPaused:String(videoPaused())});
     q<HTMLElement>('.video-placeholder').hidden=!!active;
     assign(q('.video-status'),active?(videoPaused()?providerName(videoProvider)+' · 视频暂停，连接保留':providerName(videoProvider)+' 实时画面'):videoMode==='auto'?'正在并行连接视频':'正在连接 '+providerName(videoMode));
-    qa('[data-video-mode]').forEach(i=>{const input=i as HTMLInputElement;input.checked=input.value===videoMode;input.disabled=input.value!=='auto'&&!(boot.webrtc?.availableProviders||['coturn']).includes(input.value);});
+    qa('[data-video-mode]').forEach(i=>{const input=i as HTMLInputElement;input.checked=input.value===videoMode;input.disabled=input.value!=='auto'&&!videoProviders.includes(input.value as VideoProvider);});
     networkInfo={state:current?.state||'connecting',provider:videoProvider||null,path:videoProvider==='wss'?'wss':current?.path||'',
-      availableProviders:boot.webrtc?.availableProviders||['coturn'],attempts:state.history,connections:state.attempts,retrying:state.retrying,
+      availableProviders:videoProviders,attempts:state.history,connections:state.attempts,retrying:state.retrying,
       ...current,mode:videoMode,freshness,media:{...media,paused:videoPaused(),pauseReason:videoPauseReason()},environment:{userAgent:navigator.userAgent,secureContext:window.isSecureContext,assetVersion:boot.assetVersion}};
   }
   qa('[data-video-mode]').forEach(i=>i.addEventListener('change',()=>{const input=i as HTMLInputElement;if(!input.checked)return;videoMode=input.value as VideoMode;localStorage.setItem('android-video-mode',videoMode);connectVideo();}));

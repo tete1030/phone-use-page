@@ -12,7 +12,7 @@ const observation = {
   snapshotId:'fixture', collectedAt:Date.now(), powerCollectedAt:Date.now(), nodes:[field],
   foregroundApp:'fixture', focus:field, focusEpoch:0, uiError:null, videoError:null, controlAvailable:true,
 };
-const html=await render(observation,{basePath:'/',assetVersion:await readAssetVersion(),
+const html=await render(observation,{basePath:'/',assetVersion:await readAssetVersion(),webrtc:{availableProviders:['coturn']},
   tasks:[], apiMethods:[], csrf:'fixture', pageId:'fixture', sdk:'fixture', ownsControl:false});
 const assets={
   '/':{type:'text/html',body:html},
@@ -51,6 +51,7 @@ try {
     }
     window.WebSocket=FixtureSocket;
     class FixturePeer extends EventTarget {
+      constructor(){super();window.__rtcCreated=(window.__rtcCreated||0)+1;}
       connectionState='connected';iceGatheringState=fixtureMode==='gather-timeout'?'gathering':'complete';
       addTransceiver(){}
       async createOffer(){return {type:'offer',sdp:fixtureMode?'':'a=candidate:fixture 1 udp 100 203.0.113.1 50000 typ relay\r\n'};}
@@ -71,6 +72,7 @@ try {
       if(path==='/api/connection/connect')data={connectionId:'fixture'};
       if(path==='/api/app-state')data={collectedAt:Date.now(),catalog:{apps:[]},processes:[],navigation:{locked:false,current:null,tasks:[]}};
       if(path==='/api/webrtc/config')data={provider:'coturn',availableProviders:['coturn'],iceTransportPolicy:'relay',iceServers:[{urls:'turns:fixture.invalid:8443?transport=tcp'}],renewAfterMs:null};
+      if(path==='/api/webrtc/config'&&JSON.parse(options.body).provider==='none')data={provider:'none',availableProviders:['none'],iceTransportPolicy:'all',iceServers:[],renewAfterMs:null};
       if(path==='/api/webrtc/config'&&fixtureMode)data={...data,provider:'cloudflare',availableProviders:['cloudflare'],gatherMs:50};
       if(path==='/api/webrtc/offer'){window.__offers++;data={width:864,height:1920,sdp:''};}
       if(path==='/api/webrtc/status')data={state:'connected',fixture:true};
@@ -94,6 +96,23 @@ try {
   await page.locator('.video-enlarge').click();assert.equal(await page.locator('.close-enlarge').isVisible(),true);await page.locator('.close-enlarge').click();
   const old=await page.locator('.phone').getAttribute('data-video-freshness');await page.locator('.video-reconnect').click();await page.waitForTimeout(200);assert.equal(await page.locator('.page-status').textContent(),'在线');
   await page.locator('.logout').click();assert.equal(await page.getByRole('dialog',{name:'确认操作'}).isVisible(),true);await page.getByRole('button',{name:'取消',exact:true}).click();assert.equal(await page.locator('.page-status').textContent(),'在线');
-  assert.deepEqual(errors,[]);const report={passed:true,checks:['automatic editable-semantic target','fill Unicode','pending text blocks phone and JS actions','fill empty','type append','proxy Enter commits to the verified phone target','two viewport layouts','enlarge exit','video-only reconnect','accessible logout confirmation'],phoneAccessed:false,writes:await page.evaluate(()=>window.__writes.map(w=>({length:w.text.length,expectedLength:w.expectedText.length})))};
+  const writes=await page.evaluate(()=>window.__writes.map(w=>({length:w.text.length,expectedLength:w.expectedText.length})));
+  let transportHTML=await render(observation,{basePath:'/',assetVersion:await readAssetVersion(),webrtc:{availableProviders:['wss']},tasks:[],apiMethods:[],csrf:'fixture',pageId:'fixture',sdk:'fixture',ownsControl:false});
+  await page.route(origin+'/',route=>route.fulfill({status:200,contentType:'text/html',body:transportHTML}));
+  await page.evaluate(()=>localStorage.setItem('android-video-mode','coturn'));await page.reload();
+  await page.waitForFunction(()=>document.querySelector('.page-status').textContent==='在线'&&document.querySelector('.video-candidate[data-provider=wss]'));
+  assert.equal(await page.locator('[data-video-mode][value=auto]').isChecked(),true);
+  assert.equal(await page.locator('[data-video-mode][value=wss]').isEnabled(),true);
+  for(const provider of ['none','coturn','cloudflare'])assert.equal(await page.locator(`[data-video-mode][value=${provider}]`).isDisabled(),true);
+  assert.equal(await page.evaluate(()=>window.__rtcCreated||0),0);assert.equal(await page.evaluate(()=>window.__offers),0);
+  assert.equal(await page.evaluate(()=>window.__sockets.filter(ws=>ws.url.includes('/ws/video')).length),1);
+  transportHTML=await render(observation,{basePath:'/',assetVersion:await readAssetVersion(),webrtc:{availableProviders:['none']},tasks:[],apiMethods:[],csrf:'fixture',pageId:'fixture',sdk:'fixture',ownsControl:false});
+  await page.evaluate(()=>localStorage.setItem('android-video-mode','wss'));await page.reload();
+  await page.waitForFunction(()=>window.__offers>0);
+  assert.equal(await page.locator('[data-video-mode][value=none]').isEnabled(),true);
+  assert.equal(await page.locator('[data-video-mode][value=auto]').isChecked(),true);
+  assert.equal(await page.locator('[data-video-mode][value=wss]').isDisabled(),true);
+  assert.equal(await page.evaluate(()=>window.__sockets.some(ws=>ws.url.includes('/ws/video'))),false);
+  assert.deepEqual(errors,[]);const report={passed:true,checks:['automatic editable-semantic target','fill Unicode','pending text blocks phone and JS actions','fill empty','type append','proxy Enter commits to the verified phone target','two viewport layouts','enlarge exit','video-only reconnect','accessible logout confirmation','WSS-only creates no WebRTC and resets unavailable saved mode','direct-only is selectable without TURN or WSS'],phoneAccessed:false,writes};
   await writeFile('.local/agent-ui-result.json',JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify(report));
 }finally{await browser?.close();await new Promise(resolve=>server.close(resolve));}

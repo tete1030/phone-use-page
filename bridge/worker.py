@@ -70,6 +70,11 @@ def tree():
     else:
         raise RuntimeError('Active window changed during UI capture')
     info = d.info
+    width, height = info.get('displayWidth'), info.get('displayHeight')
+    if not width or not height:
+        width, height = d.window_size()
+    if not isinstance(width, int) or not isinstance(height, int) or width <= 0 or height <= 0:
+        raise RuntimeError('Cannot establish Android display size')
     if time.monotonic() - power_cache['at'] > 5:
         read_power()
     nodes = []
@@ -109,7 +114,7 @@ def tree():
             node = dict(id=key, parentId=parent, depth=depth, index=int(a.get('index', 0)),
                         text=label, description=desc, resourceId=resource, className=cls,
                         package=package, bounds=bounds, editable=editable, password=password,
-                        visible=a.get('visible-to-user') != 'false' and min(bounds[2], info.get('displayWidth', 1080)) > max(bounds[0], 0) and min(bounds[3], info.get('displayHeight', 2400)) > max(bounds[1], 0),
+                        visible=a.get('visible-to-user') != 'false' and min(bounds[2], width) > max(bounds[0], 0) and min(bounds[3], height) > max(bounds[1], 0),
                         selector=selector, instance=instance, **flags)
             # Ignore selection and input focus in identity; retain them in the action signature.
             node['fingerprint'] = stamp(node)
@@ -136,13 +141,13 @@ def tree():
         node['childSignature'] = hashlib.sha256(json.dumps(child_content, ensure_ascii=True).encode()).hexdigest()[:24] if child_content and node['clickable'] and not node['editable'] and not node['checkable'] else ''
         node['fingerprint'] = stamp(node)
     return {'nodes': nodes, 'rotation': info.get('displayRotation', int(root.attrib.get('rotation', 0))),
-            'width': info.get('displayWidth', 1080), 'height': info.get('displayHeight', 2400),
+            'width': width, 'height': height,
             'screenOn': power_cache['awake'], 'locked': power_cache['locked'], 'windowId': window, 'elapsedMs': round((time.monotonic() - start) * 1000, 1)}
 
 
 def text_object(selector, instance=0, bounds=None, strict_bounds=True):
     selector = dict(selector)
-    # MIUI can change an editable widget's reported class when its value changes.
+    # Editable widgets can change their reported class when their value changes.
     if selector.get('resourceId'):
         selector.pop('className', None)
     obj = connect()(**selector)

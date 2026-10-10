@@ -23,6 +23,7 @@ import {installWebRtcRoutes} from './webrtc-http.js';
 import {installWssVideoRoute} from './wss-http.js';
 import {ParallelWebRtcVideo} from './parallel-webrtc.js';
 import { normalizeBasePath,consolePath,internalPath,permittedHost } from './paths.js';
+import {selectAndroidDevice} from './device-selection.js';
 
 const exec=promisify(execFile),port=Number(process.env.PORT||8780),host=process.env.HOST||'127.0.0.1';
 const basePath=normalizeBasePath(process.env.CONSOLE_BASE_PATH),endpoint=(path:string)=>consolePath(basePath,path);
@@ -36,9 +37,7 @@ let adb=process.env.ADB_PATH||'adb';try{await access(adb);}catch{if(process.env.
 const python=process.env.PYTHON_PATH||resolve('.venv/bin/python');
 await exec(adb,['start-server']);
 const list=await exec(adb,['devices']);
-const connected=list.stdout.split('\n').filter(l=>/\tdevice\s*$/.test(l)).map(l=>l.split('\t')[0]!);
-if(connected.length>1&&!process.env.ANDROID_SERIAL)throw new Error('Multiple Android devices found; set ANDROID_SERIAL to choose the intended device.');
-const serial=process.env.ANDROID_SERIAL||connected[0]||list.stdout.split('\n').find(l=>/^\S+\t/.test(l))?.split('\t')[0];if(!serial)throw new Error('No Android device found. Connect one or set ANDROID_SERIAL to keep the console available while disconnected.');
+const serial=selectAndroidDevice(list.stdout,process.env.ANDROID_SERIAL);
 const device=new Device(serial,python,adb),tasks=new Tasks(device);await tasks.init();
 const mediaConfig=rtcConfig(process.env);
 const rtc=new ParallelWebRtcVideo(device.video,mediaConfig,new TurnCredentials(mediaConfig.turn,mediaConfig.stunUrl,await loadTurnKey(mediaConfig.turn)),mediaConfig.fallbackTurn?new TurnCredentials(mediaConfig.fallbackTurn,mediaConfig.stunUrl,await loadTurnKey(mediaConfig.fallbackTurn)):undefined);

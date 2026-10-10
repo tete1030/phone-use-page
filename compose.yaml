@@ -10,9 +10,9 @@ services:
     restart: unless-stopped
     # Linux host networking keeps ADB private and avoids ICE address/port translation.
     network_mode: host
-    user: "${CONSOLE_UID:-1000}:${CONSOLE_GID:-1000}"
+    user: "${CONSOLE_UID:?Set the runtime user UID}:${CONSOLE_GID:?Set the runtime group GID}"
     group_add:
-      - "${ANDROID_USB_GID:-46}"
+      - "${ANDROID_USB_GID:?Set the actual USB access group GID}"
     device_cgroup_rules:
       - "c 189:* rw"
     cap_drop:
@@ -26,9 +26,9 @@ services:
     pids_limit: 256
     mem_limit: 1536m
     environment:
-      HOST: 0.0.0.0
+      HOST: ${CONSOLE_HTTP_HOST:-0.0.0.0}
       PORT: ${CONSOLE_HTTP_PORT:-8780}
-      ANDROID_SERIAL: ${ANDROID_SERIAL:?Set ANDROID_SERIAL in your private compose.env}
+      ANDROID_SERIAL: ${ANDROID_SERIAL:-}
       CONSOLE_PASSWORD_FILE: /run/secrets/console-password
       AUTH_DATA_DIR: /app/.local/auth
       AUTH_REMEMBER_DAYS: ${AUTH_REMEMBER_DAYS:-90}
@@ -38,8 +38,9 @@ services:
       TRUST_PROXY: ${TRUST_PROXY:-}
       WEBRTC_PORT_MIN: ${WEBRTC_PORT_MIN:-50000}
       WEBRTC_PORT_MAX: ${WEBRTC_PORT_MAX:-50031}
-      WEBRTC_STUN_URL: ${WEBRTC_STUN_URL:-stun:stun.cloudflare.com:3478}
+      WEBRTC_STUN_URL: ${WEBRTC_STUN_URL-stun:stun.cloudflare.com:3478}
       WEBRTC_ICE_GATHER_MS: ${WEBRTC_ICE_GATHER_MS:-8000}
+      WEBRTC_ENABLED: ${WEBRTC_ENABLED:-1}
       WEBRTC_TURN_PROVIDER: ${WEBRTC_TURN_PROVIDER:-none}
       WEBRTC_ICE_MODE: ${WEBRTC_ICE_MODE:-}
       WEBRTC_TURN_TTL_SECONDS: ${WEBRTC_TURN_TTL_SECONDS:-14400}
@@ -47,6 +48,9 @@ services:
       WEBRTC_PUBLIC_IP: ${WEBRTC_PUBLIC_IP:-}
       VIDEO_WSS_FALLBACK: ${VIDEO_WSS_FALLBACK:-0}
       WSS_ADAPTIVE_ENCODER: ${WSS_ADAPTIVE_ENCODER:-1}
+      VIDEO_MAX_SIZE: ${VIDEO_MAX_SIZE:-1920}
+      VIDEO_MAX_FPS: ${VIDEO_MAX_FPS:-30}
+      VIDEO_BIT_RATE: ${VIDEO_BIT_RATE:-4000000}
     volumes:
       - type: bind
         source: ${CONSOLE_PASSWORD_PATH:-./.local/console-password}

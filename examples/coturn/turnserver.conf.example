@@ -32,6 +32,8 @@ denied-peer-ip=172.16.0.0-172.31.255.255
 denied-peer-ip=192.168.0.0-192.168.255.255
 denied-peer-ip=198.18.0.0-198.19.255.255
 denied-peer-ip=224.0.0.0-255.255.255.255
+# The current console's WebRTC backend uses IPv4 only.
+denied-peer-ip=::-ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff
 # LAN validation only: both peers use this host's relay allocations.
 # Review this exception when publishing public relay addresses.
 # allowed-peer-ip=YOUR_EXPLICITLY_APPROVED_RELAY_ADDRESS
@@ -41,6 +43,6 @@ max-bps=1000000
 bps-capacity=4000000
 stale-nonce=600
 pidfile=/tmp/coturn.pid
+userdb=/tmp/turn-users.sqlite
 log-file=stdout
 simple-log
-no-stdout-log

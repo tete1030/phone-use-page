@@ -12,6 +12,7 @@ const exec=promisify(execFile),adb=process.env.ADB_PATH||'adb',serial=process.en
 const shell=async(...args)=>(await exec(adb,['-s',serial,'shell',...args])).stdout.trim();
 const activities=await shell('dumpsys','activity','activities'),original=activities.match(/ResumedActivity: ActivityRecord\{[^\n]*?u\d+ ([^ ]+) t\d+/)?.[1];
 assert.ok(original,'Cannot safely identify original foreground');
+const homeActivity=(await shell('cmd','package','resolve-activity','--brief','-a','android.intent.action.MAIN','-c','android.intent.category.HOME')).split('\n').find(line=>/^[A-Za-z0-9_.]+\/[A-Za-z0-9_.$]+$/.test(line));
 const initialPower=await shell('dumpsys','power'),wasOff=/mWakefulness=(?:Asleep|Dozing)|Display Power: state=(?:OFF|DOZE)/.test(initialPower),stayOn=await shell('settings','get','global','stay_on_while_plugged_in');
 await mkdir('.local',{recursive:true});const dir=await mkdtemp(resolve('.local/webrtc-live-'));
 const externalOrigin=process.env.PHONE_TEST_ORIGIN;
@@ -90,6 +91,6 @@ try{
 }catch(error){evidence.passed=false;evidence.error=String(error);console.error('FAIL',String(error));if(browser){try{await browser.contexts()[0]?.pages()[0]?.screenshot({path:dir+'/failure.png'});}catch{}}process.exitCode=1;}
 finally{
   if(browser)await browser.close();if(server&&server.exitCode===null){server.kill('SIGTERM');await Promise.race([new Promise(r=>server.once('exit',r)),wait(10000)]);if(server.exitCode===null)throw Error('Test server failed to stop safely');}
-  try{if(original.startsWith('com.miui.home/'))await shell('input','keyevent','3');else await shell('am','start','-n',original);if(wasOff)await shell('input','keyevent','223');const actual=await shell('settings','get','global','stay_on_while_plugged_in');if(actual!==stayOn)await shell('settings','put','global','stay_on_while_plugged_in',stayOn);evidence.restored={foreground:original,screenOff:wasOff,stayOn};}catch(error){evidence.restoreError=String(error);process.exitCode=1;}
+  try{if(original===homeActivity)await shell('input','keyevent','3');else await shell('am','start','-n',original);if(wasOff)await shell('input','keyevent','223');const actual=await shell('settings','get','global','stay_on_while_plugged_in');if(actual!==stayOn)await shell('settings','put','global','stay_on_while_plugged_in',stayOn);evidence.restored={foreground:original,screenOff:wasOff,stayOn};}catch(error){evidence.restoreError=String(error);process.exitCode=1;}
   await writeFile(dir+'/result.json',JSON.stringify(evidence,null,2),{mode:0o600});await writeFile('.local/webrtc-last-validation',dir+'\n',{mode:0o600});console.log('Evidence directory:',dir);
 }

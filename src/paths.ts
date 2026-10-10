@@ -17,6 +17,6 @@ export function permittedHost(authority:string,publicOrigin?:string){
   if(['127.0.0.1','localhost','::1'].includes(host))return true;
   if(!publicOrigin)return false;
   const url=new URL(publicOrigin);
-  // NPM passes $host without the external TLS port; write origins still match exactly.
+  // A reverse proxy may omit the external TLS port; write origins still match exactly.
   return authority===url.host||authority===url.hostname;
 }

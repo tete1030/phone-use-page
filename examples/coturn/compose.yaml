@@ -1,0 +1,33 @@
+name: phone-use-page-turn
+services:
+  turn:
+    image: ${COTURN_IMAGE:?Set a reviewed coturn image tag or digest}
+    user: "${TURN_UID:?Set the TURN config owner UID}:${TURN_GID:?Set the TURN config owner GID}"
+    restart: unless-stopped
+    # Linux only. A native coturn install is another option; the console may run elsewhere.
+    network_mode: host
+    command: ["-c", "/etc/coturn/turnserver.conf"]
+    cap_drop: [ALL]
+    # The official binary carries this file capability and needs it in the bounding set.
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=32m,mode=1777"]
+    volumes:
+      - type: bind
+        source: ${TURN_CONFIG_PATH:?Set the absolute path to your private turnserver.conf}
+        target: /etc/coturn/turnserver.conf
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${TURN_CERTIFICATE_DIR:?Set the absolute path to your certificate directory}
+        target: /certificates
+        read_only: true
+        bind:
+          create_host_path: false
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"

@@ -11,7 +11,7 @@ const observation = {
   snapshotId:'fixture', collectedAt:Date.now(), powerCollectedAt:Date.now(), nodes:[],
   foregroundApp:'fixture', focus:null, focusEpoch:0, uiError:null, videoError:null, controlAvailable:true,
 };
-const html=await render(observation,{basePath:'/',assetVersion:await readAssetVersion(),
+const html=await render(observation,{basePath:'/',assetVersion:await readAssetVersion(),webrtc:{availableProviders:['coturn']},
   tasks:[], apiMethods:[], csrf:'fixture', pageId:'fixture', sdk:'fixture', ownsControl:false});
 const assets={
   '/':{type:'text/html',body:html},

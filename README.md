@@ -20,12 +20,14 @@ The UI is currently in Chinese. No root or bootloader unlock is required.
 ## Requirements
 
 - Node.js 22.12+, Python 3.11+, ADB and an Android device with USB debugging authorized.
-- `uv` for the provided setup script, or an equivalent Python virtual environment.
+- Python venv/pip; `uv` is optional for the provided setup script.
 - A current Chromium browser for WebCodecs/WebRTC. HTTPS is required outside localhost.
 - FFmpeg when enabling adaptive WSS encoding.
 - Linux for the USB Docker Compose configuration. Native development can also run on macOS; Docker Desktop USB/host networking is not equivalent to Linux.
 
 Some Android vendors require an additional USB-debugging security setting for event injection. Hardware-keyboard and UI accessibility behavior also depend on the device and app.
+
+See the [complete Setup manual](docs/SETUP.md), [configuration reference](docs/CONFIGURATION.md) and [portability boundaries](docs/PORTABILITY.md) for a new installation. No specific phone, NAS, router, DNS or proxy product is required.
 
 ## Run Locally
 
@@ -38,6 +40,8 @@ chmod 700 .local
 
 Create `.local/console-password` containing your own password of 12-512 characters and set its permissions to `0600`. No default password is shipped.
 Set `ANDROID_SERIAL` in `.env` if multiple devices are attached; otherwise the native server selects the single connected device. Use `adb devices` to discover your device.
+
+The supplied env examples use WSS only: `WEBRTC_ENABLED=0`, `VIDEO_WSS_FALLBACK=1`. This requires no TURN key or external STUN service. Enable direct WebRTC, self-hosted TURN or Cloudflare TURN independently when needed; [transport recipes](docs/SETUP.md#5-select-video-transports) cover each combination. Use `WSS_ADAPTIVE_ENCODER=0` if you do not want FFmpeg adaptation.
 
 ```sh
 sh scripts/start.sh
@@ -59,6 +63,7 @@ npm run build
 PYTHON_PATH=.venv/bin/python npm test
 .venv/bin/python -m unittest discover -s tests -p 'test_*.py'
 CHROME_PATH=/path/to/chrome npm run test:ui
+npm run check:compose # requires the Docker Compose plugin
 ```
 
 Browser checks use synthetic fixtures; they do not control a real device. Live tests are separate opt-in scripts under `tests/`; configure your own device/URLs/secrets and review their effects before running them. Capture output is written under ignored `.local/`.

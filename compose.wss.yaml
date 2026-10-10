@@ -1,0 +1,8 @@
+# Only WSS video: no ICE sockets, STUN, relay keys or Cloudflare API calls.
+# Combine with compose.yaml, without the TURN overlays.
+services:
+  console:
+    environment:
+      WEBRTC_ENABLED: "0"
+      VIDEO_WSS_FALLBACK: "1"
+      WSS_ADAPTIVE_ENCODER: ${WSS_ADAPTIVE_ENCODER:-1}

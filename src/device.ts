@@ -24,9 +24,9 @@ export class Device extends EventEmitter {
   private applications?:ApplicationState;private readingApplications?:Promise<ApplicationState>;
   constructor(serial:string,python:string,adb:string) {
     super();this.bridge=new Bridge(serial,python,adb);this.video=new Video(serial);
-    this.state={connected:false,serial,model:'',android:'',system:'',width:1080,height:2400,rotation:0,screenOn:false,snapshotId:'',collectedAt:0,nodes:[],foregroundApp:'',focus:null,focusEpoch:0,uiError:'正在连接设备',videoError:null,controlAvailable:false};
+    this.state={connected:false,serial,model:'',android:'',system:'',width:0,height:0,rotation:0,screenOn:false,snapshotId:'',collectedAt:0,nodes:[],foregroundApp:'',focus:null,focusEpoch:0,uiError:'正在连接设备',videoError:null,controlAvailable:false};
     this.video.on('status',(error:string|null)=>{this.state.videoError=error;this.state.controlAvailable=!!this.video.client?.controller;this.notify();});
-    this.video.on('diagnostic',(line:string)=>{if(/INJECT_EVENTS|SecurityException/.test(line)){this.state.controlAvailable=false;this.state.videoError='MIUI 未允许事件注入，请开启 USB 调试（安全设置）';this.notify();}});
+    this.video.on('diagnostic',(line:string)=>{if(/INJECT_EVENTS|SecurityException/.test(line)){this.state.controlAvailable=false;this.state.videoError='设备拒绝了调试操作，请检查事件注入权限、厂商调试安全设置或设备管理策略';this.notify();}});
   }
   private notify(){this.emit('observation',this.state);}
   publish(){this.notify();}
@@ -109,7 +109,7 @@ export class Device extends EventEmitter {
   }
   private coordinates(x:number,y:number) {
     const {width,height}=this.state;
-    if(!this.video.width||Math.abs(width/height-this.video.width/this.video.height)>0.04)throw new ConsoleError('STALE_DISPLAY','视频与 UI 方向不同，请等待刷新',409);
+    if(!width||!height||!this.video.width||!this.video.height||Math.abs(width/height-this.video.width/this.video.height)>0.04)throw new ConsoleError('STALE_DISPLAY','视频与 UI 尺寸未就绪或方向不同，请等待刷新',409);
     if(x<0||y<0||x>=width||y>=height)throw new ConsoleError('INVALID_COORDINATES','手机坐标超出显示范围');
     return {x:x*this.video.width/width,y:y*this.video.height/height};
   }
