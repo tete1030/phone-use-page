@@ -1,5 +1,7 @@
 # 部署指南
 
+先阅读[默认条件与部署场景](docs/DEPLOYMENT_SCENARIOS.md)并选择对应[配置示例](examples/deployment/README.md)。附带环境示例默认本机访问、仅 WSS，不会自动配置公网入口或 TURN。
+
 [完整安装部署手册](docs/SETUP.md)涵盖设备授权、原生/Linux Docker 启动、HTTPS 代理、可选 Cloudflare Tunnel、自建 coturn、Cloudflare TURN、验证、升级和回滚。
 
 ## 按需选择
@@ -10,7 +12,9 @@
 - **两种 TURN**：以 coturn 为主，叠加 `compose.fallback.yaml`；WSS 可以独立启用或关闭。
 - **HTTP 隧道**：任何满足 HTTPS/WebSocket 要求的隧道均可；手册包含可选 Cloudflare Tunnel 配置。隧道传输页面/WSS，独立的 TURN 媒体不经过该 HTTP 通道。
 
-变量行为和支持的组合见[配置参考](docs/CONFIGURATION.md)。操作系统、安卓、浏览器、IPv4/IPv6 和基础设施限制见[通用性与支持边界](docs/PORTABILITY.md)。
+变量行为和支持的组合见[配置参考](docs/CONFIGURATION.md)。操作系统、安卓、浏览器、IPv4/IPv6 和基础设施限制见[兼容性与运行要求](docs/PORTABILITY.md)。
+
+操作系统准备见[主机与 ADB 配置](docs/HOST_SETUP.md)，脱敏历史验证和失败经验见[已验证场景与排障经验](docs/VERIFIED_SCENARIOS.md)。
 
 ## 已有部署
 

@@ -2,6 +2,8 @@
 
 本手册从本机手机控制台开始，逐步加入可选远程访问和视频中继。可以停在任意阶段，不要求特定手机厂商、NAS、路由器、DNS 服务、域名注册商或代理管理器。文中的地址均为示例；真实配置放在被 Git 忽略的 `.local/` 或 `.env` 中，不要提交。
 
+还未选定方案时，先看[默认部署条件与场景指南](DEPLOYMENT_SCENARIOS.md)。需要具体文件时，查看[配置示例目录](../examples/deployment/README.md)；主机工具、权限和 ADB 准备见[主机与 ADB 配置](HOST_SETUP.md)。
+
 ## 目录
 
 1. [选择部署拓扑](#1-choose-a-topology)
@@ -16,7 +18,7 @@
 10. [验证与排障](#10-verify-and-troubleshoot)
 11. [运行维护、升级与恢复](#11-operate-upgrade-and-recover)
 
-另请阅读[环境变量参考](CONFIGURATION.md)、[通用性与支持边界](PORTABILITY.md)和[安全说明](SECURITY.md)。
+另请阅读[环境变量参考](CONFIGURATION.md)、[兼容性与运行要求](PORTABILITY.md)和[安全说明](SECURITY.md)。
 
 <a name="1-choose-a-topology"></a>
 

@@ -1,0 +1,7 @@
+# Locally managed tunnel. Keep its real credential JSON private.
+tunnel: YOUR_TUNNEL_UUID
+credentials-file: /absolute/private/path/tunnel-credentials.json
+ingress:
+  - hostname: phone.example.com
+    service: http://127.0.0.1:8780
+  - service: http_status:404

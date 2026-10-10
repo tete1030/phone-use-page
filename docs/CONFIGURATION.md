@@ -1,5 +1,7 @@
 # 配置参考
 
+按部署方式查找需要填写的字段和示例，请先看[部署场景与配置示例](DEPLOYMENT_SCENARIOS.md)。本页列出完整变量定义；[主机与 ADB 配置](HOST_SETUP.md)解释设备/权限准备，[兼容性与运行要求](PORTABILITY.md)说明支持条件。
+
 原生启动通过 `sh scripts/start.sh` 或 `npm start` 读取 `.env`，已导出的进程环境变量优先。`npm run dev` 不自动加载 `.env`；可自行加载环境，或使用 `node --env-file-if-exists=.env --import tsx src/server.ts`。
 
 Docker Compose 从指定的私有 `--env-file .local/compose.env` 读取变量替换值，只向容器传递所选 Compose 文件明确声明的变量。`CF_TURN_KEY_PATH` 等主机路径不是应用变量，叠加文件将其映射为容器路径。未列出的运行时变量需在私有叠加配置中增加 `environment:` 项；不要把凭据写入镜像。
