@@ -8,11 +8,11 @@ services:
         APP_REVISION: ${APP_REVISION:-local}
     init: true
     restart: unless-stopped
-    # Linux 主机网络让 ADB 留在本机，并避免容器层 ICE 地址/端口转换。
+    # Linux host networking keeps ADB private and avoids ICE address/port translation.
     network_mode: host
-    user: "${CONSOLE_UID:?请设置实际运行用户 UID}:${CONSOLE_GID:?请设置实际运行组 GID}"
+    user: "${CONSOLE_UID:?Set the runtime user UID}:${CONSOLE_GID:?Set the runtime group GID}"
     group_add:
-      - "${ANDROID_USB_GID:?请设置实际 USB 访问组 GID}"
+      - "${ANDROID_USB_GID:?Set the actual USB access group GID}"
     device_cgroup_rules:
       - "c 189:* rw"
     cap_drop:

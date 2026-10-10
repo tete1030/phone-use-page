@@ -5,7 +5,7 @@ services:
       WEBRTC_TURN_PROVIDER: coturn
       WEBRTC_ICE_MODE: relay
       WEBRTC_TURN_TTL_SECONDS: ${WEBRTC_TURN_TTL_SECONDS:-600}
-      COTURN_URL: ${COTURN_URL:?请在私有 compose.env 设置浏览器访问的 TURN URL}
+      COTURN_URL: ${COTURN_URL:?Set the browser-facing TURN URL in your private compose.env}
       COTURN_SERVER_URL: ${COTURN_SERVER_URL:-${COTURN_URL}}
       COTURN_KEY_FILE: /run/secrets/coturn-key
     volumes:

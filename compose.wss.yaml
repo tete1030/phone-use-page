@@ -1,5 +1,5 @@
-# 仅 WSS 视频，不创建 ICE socket，不使用 STUN、中继密钥或 Cloudflare API。
-# 与 compose.yaml 配合使用，不叠加 TURN 配置。
+# Only WSS video: no ICE sockets, STUN, relay keys or Cloudflare API calls.
+# Combine with compose.yaml, without the TURN overlays.
 services:
   console:
     environment:

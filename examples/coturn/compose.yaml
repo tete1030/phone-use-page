@@ -1,27 +1,27 @@
 name: phone-use-page-turn
 services:
   turn:
-    image: ${COTURN_IMAGE:?请设置已审查的 coturn 镜像标签或摘要}
-    user: "${TURN_UID:?请设置 TURN 配置所有者 UID}:${TURN_GID:?请设置 TURN 配置所有者 GID}"
+    image: ${COTURN_IMAGE:?Set a reviewed coturn image tag or digest}
+    user: "${TURN_UID:?Set the TURN config owner UID}:${TURN_GID:?Set the TURN config owner GID}"
     restart: unless-stopped
-    # 适用于 Linux；也可原生安装 coturn，控制台可以运行在另一台主机。
+    # Linux only. A native coturn install is another option; the console may run elsewhere.
     network_mode: host
     command: ["-c", "/etc/coturn/turnserver.conf"]
     cap_drop: [ALL]
-    # 官方二进制携带此文件能力，需要在能力边界中保留。
+    # The official binary carries this file capability and needs it in the bounding set.
     cap_add: [NET_BIND_SERVICE]
     security_opt: ["no-new-privileges:true"]
     read_only: true
     tmpfs: ["/tmp:rw,noexec,nosuid,size=32m,mode=1777"]
     volumes:
       - type: bind
-        source: ${TURN_CONFIG_PATH:?请设置私有 turnserver.conf 的绝对路径}
+        source: ${TURN_CONFIG_PATH:?Set the absolute path to your private turnserver.conf}
         target: /etc/coturn/turnserver.conf
         read_only: true
         bind:
           create_host_path: false
       - type: bind
-        source: ${TURN_CERTIFICATE_DIR:?请设置证书目录的绝对路径}
+        source: ${TURN_CERTIFICATE_DIR:?Set the absolute path to your certificate directory}
         target: /certificates
         read_only: true
         bind:

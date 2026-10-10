@@ -1,7 +1,7 @@
 {
   "name": "phone-use-page",
   "version": "1.0.0",
-  "description": "面向真人与智能体的安卓网页控制台，支持实时视频、UI 树、文本输入和脚本自动化",
+  "description": "Browser-based Android console with video, UI tree, text input and agent scripting",
   "main": "index.js",
   "directories": {
     "test": "tests"

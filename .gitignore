@@ -1,4 +1,4 @@
-# 依赖、构建输出和本地运行/部署数据。
+# Dependencies, generated output and local runtime/deployment data.
 /node_modules/
 /.venv/
 /.local/
@@ -11,7 +11,7 @@ coverage/
 test-results/
 playwright-report/
 
-# 私有配置和凭据，仅公开已去除真实环境数据的示例。
+# Private configuration and credentials; only sanitized examples are public.
 .env*
 !.env.example
 compose.env
@@ -30,7 +30,7 @@ password.txt
 *.pfx
 *.crt
 
-# 设备截图录像、审计/会话存储及运行记录。
+# Device captures, audit/session stores and operational evidence.
 *.log
 *.sqlite*
 *.db

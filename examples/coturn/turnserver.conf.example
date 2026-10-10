@@ -1,4 +1,4 @@
-# 地址仅用于文档示例；复制到私有配置后按实际网络修改。
+# Documentation addresses only; copy to private configuration and adapt to your network.
 listening-ip=192.0.2.10
 relay-ip=192.0.2.10
 listening-port=5348
@@ -32,10 +32,10 @@ denied-peer-ip=172.16.0.0-172.31.255.255
 denied-peer-ip=192.168.0.0-192.168.255.255
 denied-peer-ip=198.18.0.0-198.19.255.255
 denied-peer-ip=224.0.0.0-255.255.255.255
-# 当前控制台 WebRTC 后端仅使用 IPv4。
+# The current console's WebRTC backend uses IPv4 only.
 denied-peer-ip=::-ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff
-# 仅用于局域网验证：双方使用本机中继分配。
-# 发布公网中继地址时，应重新审查这一例外。
+# LAN validation only: both peers use this host's relay allocations.
+# Review this exception when publishing public relay addresses.
 # allowed-peer-ip=YOUR_EXPLICITLY_APPROVED_RELAY_ADDRESS
 user-quota=2
 total-quota=8
