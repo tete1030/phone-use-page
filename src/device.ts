@@ -24,7 +24,7 @@ export class Device extends EventEmitter {
     this.claim(owner);this.assertTouchReady();this.manualTouchOwner=owner;this.notify();
   }
   claimTouch(owner:string){if(this.manualTouchOwner!==owner)throw new ConsoleError('CONTROL_REPLACED','触摸会话已结束',409);this.claim(owner,undefined,true);this.assertTouchReady();}
-  assertTouchReady(){if(this.state.powerError||!this.state.powerCollectedAt||Date.now()-this.state.powerCollectedAt>10000)throw new ConsoleError('POWER_UNKNOWN','手机状态已过期，请等待状态恢复',409);this.assertScreen();}
+  assertTouchReady(){if(!this.state.controlAvailable)throw new ConsoleError('NO_CONTROL','手机控制通道不可用，触摸未继续',503);if(this.state.powerError||!this.state.powerCollectedAt||Date.now()-this.state.powerCollectedAt>10000)throw new ConsoleError('POWER_UNKNOWN','手机状态已过期，请等待状态恢复',409);this.assertScreen();}
   endTouch(owner:string){if(this.manualTouchOwner===owner){this.manualTouchOwner=undefined;this.notify();}}
   async setConnected(active:boolean){this.sessionActive=active;if(active){await this.video.start();await this.video.confirmKeyboard(await this.bridge.call<boolean>('keyboardPresent').catch(()=>false));this.state.keyboardBackend=this.video.keyboardBackend;this.state.controlAvailable=!!this.video.client?.controller;await this.setKeepAwake(true);try{await this.collect();}catch{}}else{await this.setKeepAwake(false);await this.video.close();this.state.controlAvailable=false;this.state.keyboardBackend='offline';}this.notify();}
   private stopped=false; private generation=0; private hash='';private foregroundTimer=0;

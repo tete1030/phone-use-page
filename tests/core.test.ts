@@ -175,3 +175,8 @@ test('lost client transport releases a held pointer while live hold heartbeats p
   now=4000;f.stream.keepalive(f.gesture);now=8000;f.stream.checkTimeout();assert.equal(f.device.touching,true);
   now=10000;f.stream.checkTimeout();await f.stream.drain();assert.equal(f.replies.at(-1).code,'TOUCH_TIMEOUT');assert.deepEqual(f.events.map(p=>p.action),[0,1]);
 });
+test('loss of injection capability denies new DOWN and cancels an existing hold',async()=>{
+  const f=touchFixture();f.device.state.controlAvailable=false;f.stream.receive(f.message(0,0));await f.stream.drain();assert.equal(f.replies.at(-1).code,'NO_CONTROL');assert.equal(f.events.length,0);
+  f.device.state.controlAvailable=true;f.stream.receive({...f.message(0,0),gesture:randomUUID()});await f.stream.drain();f.device.state.controlAvailable=false;
+  f.stream.keepalive(f.replies.at(-1).gesture);await f.stream.drain();assert.deepEqual(f.events.map(p=>p.action),[0,1]);assert.equal(f.device.touching,false);
+});
