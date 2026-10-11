@@ -39,6 +39,8 @@ Docker Compose 从指定的私有 `--env-file .local/compose.env` 读取变量�
 
 ## 视频、STUN 与中继选择
 
+WSS 的编码画质、关键帧与本地独立测试方法见[WSS 画质诊断与演示](WSS_QUALITY.md)。
+
 | 应用变量 | 运行时默认值 | 含义 |
 | --- | --- | --- |
 | `WEBRTC_ENABLED` | `1` | `0` 关闭全部 WebRTC/ICE/STUN/TURN，此时必须启用 WSS。示例设为 `0`。 |

@@ -1,12 +1,12 @@
-export const SDK_VERSION='1.3.0';
+export const SDK_VERSION='1.3.1';
 export const apiMethods = [
   {name:'device.observe()',signature:'device.observe(): Promise<Observation>',purpose:'只读：读取最新设备状态和安卓节点快照。',params:'无参数。',result:'返回 snapshotId、foregroundApp、nodes、focus、focusEpoch、能力与错误。',example:'return await device.observe();',note:'不包含网页焦点或操作台控件。'},
   {name:'device.element(selector)',signature:'device.element(selector): ElementLocator',purpose:'建立节点查询，本身不操作手机。',params:'text、resourceId、description、className、package，可组合精确匹配。',result:'返回具有动作方法的定位器。',example:'await device.element({ text: "WLAN" }).click();',note:'执行时必须唯一匹配；重名报 AMBIGUOUS_TARGET，不猜第一个。'},
-  {name:'element.click()',signature:'ElementLocator.click(): Promise<ActionResult>',purpose:'点击经过重新验证的目标。',params:'无参数。',result:'返回执行回执及 snapshotId。',example:'await device.element({ text: "WLAN" }).click();',note:'当前为 scrcpy 坐标兼容路径，执行前重新验证节点及边界。'},
-  {name:'element.longPress()',signature:'ElementLocator.longPress({durationMs=700}={}): Promise<ActionResult>',purpose:'长按报告 longClickable 的目标。',params:'durationMs：400–3000 毫秒。',result:'返回 ActionResult。',example:'await device.element({ text: "WLAN" }).longPress({durationMs:800});',note:'未报告长按能力时拒绝，不根据类名猜测。'},
+  {name:'element.click()',signature:'ElementLocator.click({jitter}={}): Promise<ActionResult>',purpose:'通过触摸点击经过重新验证的目标。',params:'jitter：可选布尔值，默认沿用运行脚本时的“随机落点”设置；未指定设置时开启。',result:'返回执行回执、snapshotId、jitter 和实际手机像素落点 point。',example:'await device.element({ text: "WLAN" }).click({jitter:true});',note:'偏移限于中心附近，单轴最多 5 px；小控件自动缩小范围。jitter:false 使用中心点，不保证免于风控。'},
+  {name:'element.longPress()',signature:'ElementLocator.longPress({durationMs=700,jitter}={}): Promise<ActionResult>',purpose:'长按报告 longClickable 的目标。',params:'durationMs：400–3000 毫秒；jitter 同 click。',result:'返回执行回执及实际手机像素落点 point。',example:'await device.element({ text: "WLAN" }).longPress({durationMs:800,jitter:true});',note:'未报告长按能力时拒绝；整个按下到抬起过程使用同一个落点。'},
   {name:'element.focus()',signature:'ElementLocator.focus(): Promise<ActionResult>',purpose:'点击可编辑目标请求手机输入焦点。',params:'无参数。',result:'返回 ActionResult；重新观察 focus 判断实际焦点。',example:'await device.element({ className: "android.widget.EditText" }).focus();',note:'焦点改变后网页文字会话需要重新绑定。'},
   {name:'element.setText(text)',signature:'ElementLocator.setText(text): Promise<ActionResult>',purpose:'通过 UI Automator 替换完整文本，支持 Unicode。',params:'text：字符串，最多 32768 字符。',result:'返回 ActionResult。',example:'await device.element({ className: "android.widget.EditText" }).setText("蓝牙");',note:'整值替换会影响光标位置。密码与不支持的自绘字段拒绝。'},
-  {name:'element.setChecked(value)',signature:'ElementLocator.setChecked(value): Promise<ActionResult>',purpose:'设置已报告 checkable/clickable 的开关并验证。',params:'value：true 或 false。',result:'返回 ActionResult；未达到状态时报 VERIFY_FAILED。',example:'await device.element({ description: "WLAN 开关" }).setChecked(false);',note:'选择器须按实际节点填写；不是 Android ACTION_SET_CHECKED。'},
+  {name:'element.setChecked(value)',signature:'ElementLocator.setChecked(value,{jitter}={}): Promise<ActionResult>',purpose:'设置已报告 checkable/clickable 的开关并验证。',params:'value：true 或 false；jitter 同 click，仅在需要点击时生效。',result:'返回 ActionResult；未达到状态时报 VERIFY_FAILED。',example:'await device.element({ description: "WLAN 开关" }).setChecked(false,{jitter:true});',note:'选择器须按实际节点填写；不是 Android ACTION_SET_CHECKED。'},
   {name:'element.scrollIntoView()',signature:'ElementLocator.scrollIntoView(): Promise<ElementSnapshot>',purpose:'向上滑动当前界面直到目标唯一可见。',params:'无参数；最多 8 次滑动。',result:'返回可见节点或 TARGET_NOT_FOUND。',example:'await device.element({ text: "更多设置" }).scrollIntoView();',note:'有限的向下列表查找，不支持任意方向或隐藏应用状态。'},
   {name:'device.press(key)',signature:'device.press(key): Promise<ActionResult | WakeResult>',purpose:'手机导航或功能按键；WAKEUP 唤醒并请求系统解锁。',params:'BACK、HOME、RECENTS、ENTER、ESC、TAB、BACKSPACE、DELETE、UP、DOWN、LEFT、RIGHT、SPACE、PASTE、MOVE_HOME、MOVE_END、WAKEUP。',result:'普通按键返回 ActionResult；WAKEUP 返回 status、screenOn、locked。',example:'await device.press("BACK");',note:'锁屏/熄屏时普通按键被拒绝；WAKEUP 不输入密码，未成功解锁时需用户在手机上完成。'},
   {name:'device.tap(x,y)',signature:'device.tap(x,y): Promise<ActionResult>',purpose:'使用手机像素坐标点击。',params:'x、y 为 observe 返回的手机显示坐标。',result:'返回 ActionResult。',example:'await device.tap(540,1200);',note:'不是网页 CSS 坐标；显示方向或尺寸不一致时拒绝。'},
@@ -33,10 +33,10 @@ export function sdkBootstrap() {
   globalThis.device=Object.freeze({
     panel:(kind)=>call('panel',{kind}),clipboard:()=>call('clipboard',{write:false}),setClipboard:(text)=>call('clipboard',{write:true,text}),observe:()=>call('observe'),uiTree:()=>call('uiTree'),screenshot:()=>call('screenshot'),
     element:(selector)=>Object.freeze({
-      click:()=>call('node',{selector,action:'click'}),
-      longPress:(options={})=>call('node',{selector,action:'longPress',value:options.durationMs??700}),
+      click:(options={})=>call('node',{selector,action:'click',clickOptions:options}),
+      longPress:(options={})=>{const {durationMs,...clickOptions}=options;return call('node',{selector,action:'longPress',value:durationMs??700,clickOptions});},
       focus:()=>call('node',{selector,action:'focus'}),setText:(text)=>call('node',{selector,action:'setText',value:text}),
-      setChecked:(value)=>call('node',{selector,action:'setChecked',value}),scrollIntoView:()=>call('scrollIntoView',{selector})
+      setChecked:(value,options={})=>call('node',{selector,action:'setChecked',value,clickOptions:options}),scrollIntoView:()=>call('scrollIntoView',{selector})
     }),
     tap:(x,y)=>call('gesture',{kind:'tap',x,y}),
     swipe:(x1,y1,x2,y2,options={})=>call('gesture',{kind:'swipe',x1,y1,x2,y2,...options}),

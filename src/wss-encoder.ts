@@ -4,11 +4,24 @@ import {createSocket,type Socket} from 'node:dgram';
 import type {ScrcpyMediaStreamPacket} from '@yume-chan/scrcpy';
 
 export const wssProfiles={
-  low:{fps:4,bitRate:600000,crf:24},
-  balanced:{fps:8,bitRate:1200000,crf:24},
-  high:{fps:12,bitRate:1800000,crf:23},
+  low:{fps:4,bitRate:600000,crf:24,keyframeIntervalSeconds:3},
+  balanced:{fps:8,bitRate:1200000,crf:24,keyframeIntervalSeconds:2},
+  high:{fps:12,bitRate:1800000,crf:23,keyframeIntervalSeconds:2},
 } as const;
 export type WssProfile=keyof typeof wssProfiles;
+const bufferSeconds=2;
+export function wssEncodingArgs(profile:WssProfile,port:number) {
+  const p=wssProfiles[profile];
+  return ['-hide_banner','-loglevel','error','-probesize','32','-analyzeduration','0',
+    '-use_wallclock_as_timestamps','1','-fflags','+genpts+discardcorrupt','-flags','low_delay','-f','h264','-i','pipe:0',
+    '-an','-vf',`select=isnan(prev_selected_t)+gte(t-prev_selected_t\\,${1/p.fps}),setpts=PTS-STARTPTS`,
+    '-fps_mode','vfr','-c:v','libx264','-preset','veryfast','-tune','zerolatency','-threads','2','-crf',String(p.crf),
+    '-maxrate',String(p.bitRate),'-bufsize',String(p.bitRate*bufferSeconds),'-pix_fmt','yuv420p',
+    '-g',String(p.fps*p.keyframeIntervalSeconds),'-keyint_min',String(p.fps*p.keyframeIntervalSeconds),'-sc_threshold','0','-bf','0',
+    // Match rate control to sampled FPS; leave VFR intact for sparse screen updates.
+    '-x264-params',`aud=1:repeat-headers=1:fps=${p.fps}/1`,
+    '-f','rtp','-payload_type','96',`rtp://127.0.0.1:${port}?pkt_size=1200`];
+}
 const annex=(nalus:Uint8Array[])=>Buffer.concat(nalus.flatMap(n=>[Buffer.from([0,0,0,1]),Buffer.from(n)]));
 
 export class WssEncoder extends EventEmitter {
@@ -17,11 +30,12 @@ export class WssEncoder extends EventEmitter {
   private inputConfig?:Uint8Array;
   private paused=false;
   private needsKey=true;
+  private outputNeedsKey=true;private droppedRtpFrames=0;private receiveBufferBytes:number|null=null;
   private generation=0;
   profile:WssProfile='balanced';
   private lastChange=0;private bad=0;private good=0;
   constructor(private requestKey:()=>void,private executable=process.env.FFMPEG_PATH||'ffmpeg',private now:()=>number=Date.now){super();}
-  start(){if(this.child||this.starting||this.paused)return;this.starting=true;const generation=++this.generation,p=wssProfiles[this.profile],socket=createSocket('udp4');this.socket=socket;
+  start(){if(this.child||this.starting||this.paused)return;this.starting=true;const generation=++this.generation,socket=createSocket('udp4');this.socket=socket;
     let frame:Uint8Array[]=[],frameBytes=0,fragment:Buffer|undefined,sps:Uint8Array|undefined,pps:Uint8Array|undefined,lastSequence:number|undefined,damaged=false;
     socket.on('message',data=>{if(generation!==this.generation||data.length<12)return;const sequence=data.readUInt16BE(2);
       if(lastSequence!==undefined&&sequence!==((lastSequence+1)&65535))damaged=true;lastSequence=sequence;
@@ -31,17 +45,22 @@ export class WssEncoder extends EventEmitter {
       if(type<24)nal(payload);
       else if(type===24){let i=1;while(i+2<=payload.length){const length=payload.readUInt16BE(i);i+=2;if(i+length>payload.length){damaged=true;break;}nal(payload.subarray(i,i+length));i+=length;}}
       else if(type===28&&payload.length>=2&&!damaged){if(payload[1]!&128)fragment=Buffer.from([(payload[0]!&224)|(payload[1]!&31)]);if(fragment){fragment=Buffer.concat([fragment,payload.subarray(2)]);if(fragment.length>2_000_000){damaged=true;fragment=undefined;}else if(payload[1]!&64){nal(fragment);fragment=undefined;}}else damaged=true;}
-      if(data[1]!&128){const keyframe=frame.some(n=>(n[0]!&31)===5);if(!damaged&&frame.length){if(keyframe&&sps&&pps)this.emit('packet',{type:'configuration',data:annex([sps,pps])} satisfies ScrcpyMediaStreamPacket);this.emit('packet',{type:'data',data:annex(frame),keyframe,pts:BigInt(Date.now())*1000n} satisfies ScrcpyMediaStreamPacket);}frame=[];frameBytes=0;fragment=undefined;damaged=false;}
+      if(data[1]!&128){const keyframe=frame.some(n=>(n[0]!&31)===5);
+        if(damaged){this.droppedRtpFrames++;this.outputNeedsKey=true;}
+        else if(frame.length){
+          if(keyframe&&sps&&pps){this.outputNeedsKey=false;this.emit('packet',{type:'configuration',data:annex([sps,pps])} satisfies ScrcpyMediaStreamPacket);}
+          // Predictive frames after local packet loss need a new intact reference.
+          if(!this.outputNeedsKey)this.emit('packet',{type:'data',data:annex(frame),keyframe,pts:BigInt(Date.now())*1000n} satisfies ScrcpyMediaStreamPacket);
+        }
+        frame=[];frameBytes=0;fragment=undefined;damaged=false;
+      }
     });
     socket.on('error',()=>this.fail(generation));socket.bind(0,'127.0.0.1',()=>{if(generation!==this.generation){try{socket.close();}catch{}return;}this.starting=false;
-    const address=socket.address();const child=spawn(this.executable,['-hide_banner','-loglevel','error','-probesize','32','-analyzeduration','0',
-      '-use_wallclock_as_timestamps','1','-fflags','+genpts+discardcorrupt','-flags','low_delay','-f','h264','-i','pipe:0',
-      '-an','-vf',`select=isnan(prev_selected_t)+gte(t-prev_selected_t\\,${1/p.fps}),setpts=PTS-STARTPTS`,
-      '-fps_mode','vfr','-c:v','libx264','-preset','veryfast','-tune','zerolatency','-threads','2','-crf',String(p.crf),
-      '-maxrate',String(p.bitRate),'-bufsize',String(Math.floor(p.bitRate/3)),'-pix_fmt','yuv420p',
-      '-g',String(p.fps),'-keyint_min',String(p.fps),'-sc_threshold','0','-bf','0','-x264-params','aud=1:repeat-headers=1',
-      '-f','rtp','-payload_type','96',`rtp://127.0.0.1:${address.port}?pkt_size=1200`],{stdio:['pipe','pipe','pipe']});
-    this.child=child;this.needsKey=true;
+    // A detailed keyframe can arrive as a burst of hundreds of RTP datagrams.
+    try{socket.setRecvBufferSize(4*1024*1024);}catch{}
+    this.receiveBufferBytes=socket.getRecvBufferSize();
+    const address=socket.address();const child=spawn(this.executable,wssEncodingArgs(this.profile,address.port),{stdio:['pipe','pipe','pipe']});
+    this.child=child;this.needsKey=true;this.outputNeedsKey=true;
     child.stdout.on('data',()=>{});
     child.stderr.on('data',()=>{});child.stdin.on('error',()=>this.fail(generation));
     child.on('error',()=>this.fail(generation));child.on('exit',()=>this.fail(generation));
@@ -63,5 +82,5 @@ export class WssEncoder extends EventEmitter {
   }
   private change(profile:WssProfile){if(this.profile===profile)return;this.profile=profile;this.lastChange=this.now();this.bad=0;this.good=0;this.stop();this.start();this.emit('profile',profile);}
   stop(){this.generation++;this.starting=false;const child=this.child;this.child=undefined;if(child){child.stdin.destroy();child.kill('SIGKILL');}const socket=this.socket;this.socket=undefined;try{socket?.close();}catch{}}
-  snapshot(){return {profile:this.profile,...wssProfiles[this.profile],resolution:'preserved',running:!!this.child};}
+  snapshot(){return {profile:this.profile,...wssProfiles[this.profile],bufferBits:wssProfiles[this.profile].bitRate*bufferSeconds,receiveBufferBytes:this.receiveBufferBytes,droppedRtpFrames:this.droppedRtpFrames,waitingForOutputKeyframe:this.outputNeedsKey,resolution:'preserved',running:!!this.child};}
 }

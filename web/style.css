@@ -71,6 +71,8 @@ body{background:#f5f7fc}
 #android-observable .node-filter {display:flex;gap:4px;align-items:center;padding:0 7px;border-bottom:1px solid var(--as-line);}
 #android-observable .node-filter button {font-size:12px;min-height:22px;padding:1px 7px;}
 #android-observable .node-filter .count {margin-left:auto;font-size:12px;color:var(--as-dim);}
+#android-observable .click-jitter-label {display:flex;align-items:center;gap:3px;font-size:11px;white-space:nowrap;}
+#android-observable .click-jitter-label input {width:auto;margin:0;}
 #android-observable .node-body {overflow:auto;overscroll-behavior:contain;min-height:0;padding:2px 6px;}
 #android-observable .node-list,#android-observable .node-list ul {padding:0;margin:0;list-style:none;}
 #android-observable .node-list li {display:block;min-width:0;}

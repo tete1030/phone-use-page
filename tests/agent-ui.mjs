@@ -32,7 +32,7 @@ try {
   browser=await chromium.launch({executablePath:process.env.CHROME_PATH||'/opt/google/chrome/chrome',headless:true,args:['--no-sandbox']});
   const context=await browser.newContext({viewport:{width:1919,height:998},permissions:['clipboard-read','clipboard-write']});
   await context.addInitScript(()=>{
-    window.__messages=[];window.__phoneText='初始';window.__writes=[];window.__presses=[];
+    window.__messages=[];window.__phoneText='初始';window.__writes=[];window.__presses=[];window.__nodeActions=[];window.__taskRequests=[];
     window.__sockets=[];
     window.__offers=0;
     window.__clockOffset=0;
@@ -67,6 +67,8 @@ try {
       if(!path.startsWith('/api/'))return originalFetch(url,options);
       let data={};
       if(path==='/api/press')window.__presses.push(JSON.parse(options.body));
+      if(path==='/api/node')window.__nodeActions.push(JSON.parse(options.body));
+      if(path==='/api/tasks'){window.__taskRequests.push(JSON.parse(options.body));data={id:'fixture-script',startedAt:Date.now(),status:'completed',steps:0,logs:[],result:null};}
       if(path==='/api/binding')data={binding:{target:{id:'field1',fingerprint:'stable',snapshotId:'fixture'},focusEpoch:0},text:window.__phoneText};
       if(path==='/api/text'){const body=JSON.parse(options.body);window.__writes.push(body);await new Promise(r=>setTimeout(r,100));if(body.expectedText!==window.__phoneText)return new Response(JSON.stringify({error:{code:'TEXT_CONFLICT',message:'fixture conflict'}}),{status:409});window.__phoneText=body.text;data={text:body.text,focusEpoch:0,verification:'verified'};}
       if(path==='/api/connection/connect')data={connectionId:'fixture'};
@@ -92,11 +94,24 @@ try {
   await proxy.fill('');await page.waitForFunction(()=>window.__phoneText==='');
   await proxy.pressSequentially('abc');await page.waitForFunction(()=>window.__phoneText==='abc');
   await proxy.press('Enter');await page.waitForFunction(()=>window.__presses.some(p=>p.key==='ENTER'&&p.binding?.target.id==='field1'));
+  const jitter=page.getByRole('checkbox',{name:'元素动作与 JS 随机落点'});
+  assert.equal(await jitter.isChecked(),true);
+  await page.locator('.node-button').click();await page.locator('.inspect-click').click();
+  await page.waitForFunction(()=>window.__nodeActions.length===1);
+  assert.equal(await page.evaluate(()=>window.__nodeActions[0].clickOptions.jitter),true);
+  await jitter.uncheck();await page.locator('.inspect-click').click();
+  await page.waitForFunction(()=>window.__nodeActions.length===2);
+  assert.equal(await page.evaluate(()=>window.__nodeActions[1].clickOptions.jitter),false);
+  await page.locator('.code-input').fill('return await device.observe();');await page.locator('.run').click();
+  await page.waitForFunction(()=>window.__taskRequests.length===1);
+  assert.equal(await page.evaluate(()=>window.__taskRequests[0].clickOptions.jitter),false);
+  const writes=await page.evaluate(()=>window.__writes.map(w=>({length:w.text.length,expectedLength:w.expectedText.length})));
+  await page.reload();await page.waitForFunction(()=>document.querySelector('.page-status').textContent==='在线');
+  assert.equal(await jitter.isChecked(),false);await jitter.check();
   for(const viewport of [{width:1600,height:900},{width:1919,height:998}]){await page.setViewportSize(viewport);await page.waitForTimeout(200);const geometry=await page.evaluate(()=>({w:document.documentElement.scrollWidth,h:document.documentElement.scrollHeight}));assert.ok(geometry.w<=viewport.width&&geometry.h<=viewport.height);await page.screenshot({path:`.local/agent-layout-${viewport.width}.png`});}
   await page.locator('.video-enlarge').click();assert.equal(await page.locator('.close-enlarge').isVisible(),true);await page.locator('.close-enlarge').click();
   const old=await page.locator('.phone').getAttribute('data-video-freshness');await page.locator('.video-reconnect').click();await page.waitForTimeout(200);assert.equal(await page.locator('.page-status').textContent(),'在线');
   await page.locator('.logout').click();assert.equal(await page.getByRole('dialog',{name:'确认操作'}).isVisible(),true);await page.getByRole('button',{name:'取消',exact:true}).click();assert.equal(await page.locator('.page-status').textContent(),'在线');
-  const writes=await page.evaluate(()=>window.__writes.map(w=>({length:w.text.length,expectedLength:w.expectedText.length})));
   let transportHTML=await render(observation,{basePath:'/',assetVersion:await readAssetVersion(),webrtc:{availableProviders:['wss']},tasks:[],apiMethods:[],csrf:'fixture',pageId:'fixture',sdk:'fixture',ownsControl:false});
   await page.route(origin+'/',route=>route.fulfill({status:200,contentType:'text/html',body:transportHTML}));
   await page.evaluate(()=>localStorage.setItem('android-video-mode','coturn'));await page.reload();
@@ -113,6 +128,6 @@ try {
   assert.equal(await page.locator('[data-video-mode][value=auto]').isChecked(),true);
   assert.equal(await page.locator('[data-video-mode][value=wss]').isDisabled(),true);
   assert.equal(await page.evaluate(()=>window.__sockets.some(ws=>ws.url.includes('/ws/video'))),false);
-  assert.deepEqual(errors,[]);const report={passed:true,checks:['automatic editable-semantic target','fill Unicode','pending text blocks phone and JS actions','fill empty','type append','proxy Enter commits to the verified phone target','two viewport layouts','enlarge exit','video-only reconnect','accessible logout confirmation','WSS-only creates no WebRTC and resets unavailable saved mode','direct-only is selectable without TURN or WSS'],phoneAccessed:false,writes};
+  assert.deepEqual(errors,[]);const report={passed:true,checks:['automatic editable-semantic target','fill Unicode','pending text blocks phone and JS actions','fill empty','type append','proxy Enter commits to the verified phone target','node jitter default and checkbox override','JS captures jitter setting','jitter setting survives reload','two viewport layouts','enlarge exit','video-only reconnect','accessible logout confirmation','WSS-only creates no WebRTC and resets unavailable saved mode','direct-only is selectable without TURN or WSS'],phoneAccessed:false,writes};
   await writeFile('.local/agent-ui-result.json',JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify(report));
 }finally{await browser?.close();await new Promise(resolve=>server.close(resolve));}

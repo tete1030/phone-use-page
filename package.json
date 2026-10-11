@@ -16,6 +16,8 @@
     "test:webrtc": "node --import tsx tests/webrtc.test.ts && node --import tsx tests/turn.test.ts && node --import tsx tests/turn-fallback.test.ts && node --import tsx tests/wss.test.ts && node --import tsx tests/video-race.test.ts && node --import tsx tests/wss-encoder.test.ts && node --import tsx tests/video-freshness.test.ts && node --import tsx tests/session-keyboard.test.ts",
     "test:webrtc:live": "PHONE_LIVE_TEST=1 node tests/webrtc-live.mjs",
     "test:ui": "node --import tsx tests/ui-interactions.mjs && node --import tsx tests/agent-ui.mjs",
+    "demo:wss-quality": "node --import tsx scripts/wss-quality-demo.mjs --serve",
+    "test:wss-quality": "node --import tsx tests/wss-quality-live.mjs",
     "check:publication": "python3 scripts/check-publication.py",
     "check:compose": "python3 scripts/check-compose.py"
   },

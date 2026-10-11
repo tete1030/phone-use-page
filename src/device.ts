@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { Bridge } from './bridge.js';
 import { Video } from './video.js';
 import { ConsoleError, type AndroidNode, type Observation, type Selector, type Target, type TextBinding, type ApplicationState, type Navigation } from './types.js';
+import {nodeTouchPoint,resolveClickOptions,type ClickOptions} from './click-options.js';
 
 const pause=(ms:number)=>new Promise(resolve=>setTimeout(resolve,ms));
 const cancellablePause=(ms:number,signal?:AbortSignal)=>new Promise<void>((resolve,reject)=>{const abort=()=>{clearTimeout(timer);reject(new ConsoleError('CANCELLED','任务已停止',409));};if(signal?.aborted){reject(new ConsoleError('CANCELLED','任务已停止',409));return;}const timer=setTimeout(()=>{signal?.removeEventListener('abort',abort);resolve();},ms);signal?.addEventListener('abort',abort,{once:true});});
@@ -114,10 +115,12 @@ export class Device extends EventEmitter {
     return {x:x*this.video.width/width,y:y*this.video.height/height};
   }
   private async tapAt(x:number,y:number,duration=60){const p=this.coordinates(x,y);await this.video.touch(0,0n,p.x,p.y);try{await pause(duration);}finally{await this.video.touch(1,0n,p.x,p.y);}}
-  async nodeAction(session:string,target:Target,action:string,value?:unknown,task?:string) {
+  async nodeAction(session:string,target:Target,action:string,value?:unknown,task?:string,clickOptions?:ClickOptions) {
+    const options=resolveClickOptions(clickOptions);
     return this.enqueue(session,async()=>{
       await this.ensureInteractive();
-      const n=await this.target(target);const [l,t,r,b]=n.bounds;const x=(Math.max(l,0)+Math.min(r,this.state.width))/2,y=(Math.max(t,0)+Math.min(b,this.state.height))/2;
+      const n=await this.target(target);let point:{x:number;y:number}|undefined;
+      const touch=async(duration=60)=>{point=nodeTouchPoint(n,this.state.width,this.state.height,options.jitter);await this.tapAt(point.x,point.y,duration);};
       this.claim(session,task);
       if(action!=='setText'&&!this.state.controlAvailable)throw new ConsoleError('NO_CONTROL','设备未允许触摸或按键注入',503);
       if(action==='setText') {
@@ -126,14 +129,14 @@ export class Device extends EventEmitter {
         if(confirmation.text!==value)throw new ConsoleError('TEXT_VERIFY_FAILED','手机文字未达到期望值，请核对输入框',409);
       } else if(action==='setChecked') {
         if(!n.checkable||!n.clickable||typeof value!=='boolean')throw new ConsoleError('UNSUPPORTED_ACTION','该节点未报告可用开关能力');
-        if(n.checked!==value)await this.tapAt(x,y);
+        if(n.checked!==value)await touch();
       } else if(action==='focus') {if(!n.editable)throw new ConsoleError('UNSUPPORTED_ACTION','节点不是输入框');await this.bridge.call('clickNode',{selector:n.selector,instance:n.instance,bounds:n.bounds},15000,()=>this.claim(session,task));}
-      else if(action==='click') {if(!n.clickable)throw new ConsoleError('UNSUPPORTED_ACTION','节点未报告点击能力');await this.tapAt(x,y);}
-      else if(action==='longPress') {if(!n.longClickable)throw new ConsoleError('UNSUPPORTED_ACTION','节点未报告长按能力');await this.tapAt(x,y,typeof value==='number'?Math.min(Math.max(value,400),3000):700);}
+      else if(action==='click') {if(!n.clickable)throw new ConsoleError('UNSUPPORTED_ACTION','节点未报告点击能力');await touch();}
+      else if(action==='longPress') {if(!n.longClickable)throw new ConsoleError('UNSUPPORTED_ACTION','节点未报告长按能力');await touch(typeof value==='number'?Math.min(Math.max(value,400),3000):700);}
       else throw new ConsoleError('UNSUPPORTED_ACTION','不支持的节点动作');
       await pause(100);await this.collect();
       if(action==='setChecked'){const current=this.state.nodes.find(x=>x.id===n.id);if(!current||current.checked!==value)throw new ConsoleError('VERIFY_FAILED','开关状态未达到期望值，请观察手机',409);}
-      return {requestId:randomUUID(),status:'ok',execution:'sent',verification:['setText','setChecked'].includes(action)?'verified':action==='focus'&&this.state.focus?.id===n.id?'verified':'not_verified',backend:action==='setText'?'uiautomator2.setText':action==='focus'?'uiautomator2.focus':'scrcpy-coordinate-compatibility',snapshotId:this.state.snapshotId};
+      return {requestId:randomUUID(),status:'ok',execution:'sent',verification:['setText','setChecked'].includes(action)?'verified':action==='focus'&&this.state.focus?.id===n.id?'verified':'not_verified',backend:action==='setText'?'uiautomator2.setText':action==='focus'?'uiautomator2.focus':'scrcpy-coordinate-compatibility',...(point?{jitter:options.jitter,point}:{}),snapshotId:this.state.snapshotId};
     },task);
   }
   async panel(session:string,kind:'notifications'|'settings',task?:string){return this.enqueue(session,async()=>{await this.ensureInteractive();await this.video.panel(kind);await this.afterApplicationAction();return {execution:'sent',verification:'not_verified',snapshotId:this.state.snapshotId};},task);}

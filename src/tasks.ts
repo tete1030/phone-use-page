@@ -5,8 +5,9 @@ import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
 import { Device, keyCodes } from './device.js';
 import { ConsoleError, type Selector } from './types.js';
+import {resolveClickOptions,type ClickOptions,type ResolvedClickOptions} from './click-options.js';
 
-export interface Task {id:string;status:string;startedAt:number;finishedAt?:number;logs:string[];steps:number;result?:unknown;error?:string;owner:string;code:string}
+export interface Task {id:string;status:string;startedAt:number;finishedAt?:number;logs:string[];steps:number;result?:unknown;error?:string;owner:string;code:string;clickOptions?:ResolvedClickOptions}
 const wait=(ms:number,signal:AbortSignal)=>new Promise<void>((resolve,reject)=>{if(signal.aborted){reject(new ConsoleError('CANCELLED','任务已停止'));return;}const timer=setTimeout(()=>{signal.removeEventListener('abort',abort);resolve();},ms);const abort=()=>{clearTimeout(timer);reject(new ConsoleError('CANCELLED','任务已停止'));};signal.addEventListener('abort',abort,{once:true});});
 
 export class Tasks extends EventEmitter {
@@ -20,9 +21,9 @@ export class Tasks extends EventEmitter {
     this.saves.set(task.id,work);void work.finally(()=>{if(this.saves.get(task.id)===work)this.saves.delete(task.id);}).catch(error=>console.error('Task persistence:',String(error)));
   }
   latest(){return [...this.records.values()].sort((a,b)=>b.startedAt-a.startedAt).slice(0,20);}
-  async start(code:string,owner:string,check=false){
+  async start(code:string,owner:string,check=false,clickOptions?:ClickOptions){
     if(typeof code!=='string'||!code.trim()||code.length>32768)throw new ConsoleError('SCRIPT_LIMIT','脚本不能为空，且不能超过 32768 字符');
-    const task:Task={id:randomUUID(),status:'running',startedAt:Date.now(),logs:[],steps:0,owner,code};
+    const task:Task={id:randomUUID(),status:'running',startedAt:Date.now(),logs:[],steps:0,owner,code,clickOptions:resolveClickOptions(clickOptions)};
     if(!check){this.device.claim(owner);if(this.device.activeTask)throw new ConsoleError('TASK_BUSY','已有脚本运行',409);this.device.activeTask=task.id;this.device.publish();try{await this.device.video.release();}catch(error){this.device.activeTask=undefined;this.device.publish();throw error;}}
     const controller=new AbortController();this.signals.set(task.id,controller);this.records.set(task.id,task);
     const child=fork(resolve('dist/script-worker.js'),[],{cwd:process.cwd(),env:{PATH:process.env.PATH},execArgv:['--max-old-space-size=128'],stdio:['ignore','ignore','pipe','ipc']});this.children.set(task.id,child);
@@ -35,7 +36,7 @@ export class Tasks extends EventEmitter {
         if(check){child.send({type:'reply',id:message.id,ok:false,error:'Syntax checking cannot call device SDK'});return;}
         if(++task.steps>200){this.finish(task,'failed','SDK 调用超过 200 次');return;}
         this.save(task);
-        try{const params=JSON.parse(message.params);const result=await this.rpc(message.method,params,owner,task.id,controller.signal);if(task.status==='running'&&child.connected)child.send({type:'reply',id:message.id,ok:true,result});}
+        try{const params=JSON.parse(message.params);const result=await this.rpc(message.method,params,owner,task.id,controller.signal,task.clickOptions);if(task.status==='running'&&child.connected)child.send({type:'reply',id:message.id,ok:true,result});}
         catch(error){if(child.connected)child.send({type:'reply',id:message.id,ok:false,code:error instanceof ConsoleError?error.code:'DEVICE_ERROR',error:error instanceof Error?error.message:String(error)});}
         this.save(task);
       }else if(message.type==='log'){if(task.logs.join('').length+message.text.length>65536){this.finish(task,'failed','日志超过 64 KiB');return;}task.logs.push(message.text);this.save(task);}
@@ -49,7 +50,7 @@ export class Tasks extends EventEmitter {
   private finish(task:Task,status:string,error?:string){if(task.status!=='running')return;task.status=status;task.error=error;task.finishedAt=Date.now();this.signals.get(task.id)?.abort();this.children.get(task.id)?.kill();this.children.delete(task.id);this.signals.delete(task.id);if(this.device.activeTask===task.id){this.device.activeTask=undefined;void this.device.video.release();this.device.publish();}this.save(task);}
   stop(id:string,owner:string){const task=this.records.get(id);if(!task)throw new ConsoleError('TASK_NOT_FOUND','任务不存在',404);if(task.owner!==owner)throw new ConsoleError('FORBIDDEN','不能停止其他会话任务',403);this.finish(task,'cancelled','用户停止；已完成动作不回滚');return task;}
   revokeOwner(owner:string){let count=0;for(const task of this.records.values())if(task.owner===owner&&task.status==='running'){this.finish(task,'cancelled','页面已离线，后续动作已停止；已完成动作保留');count++;}return count;}
-  private async rpc(method:string,p:any,owner:string,taskId:string,signal:AbortSignal):Promise<unknown>{
+  private async rpc(method:string,p:any,owner:string,taskId:string,signal:AbortSignal,clickOptions:ResolvedClickOptions={jitter:true}):Promise<unknown>{
     if(signal.aborted)throw new ConsoleError('CANCELLED','任务已停止');this.onActivity(owner);
     if(method==='panel'){if(!['notifications','settings'].includes(p.kind))throw new ConsoleError('INVALID_PANEL','无效面板');return this.device.panel(owner,p.kind,taskId);}
     if(method==='clipboard'){if(p.write&&(typeof p.text!=='string'||p.text.length>32768))throw new ConsoleError('TEXT_LIMIT','剪贴板文字无效');return this.device.enqueue(owner,async()=>{await this.device.ensureInteractive();return this.device.bridge.call('clipboard',p);},taskId);}
@@ -57,7 +58,7 @@ export class Tasks extends EventEmitter {
     if(method==='uiTree')return (await this.device.collect()).nodes;
     if(method==='screenshot')return this.device.bridge.call('screenshot');
     if(method==='sleep'){if(!Number.isFinite(p.ms)||p.ms<0||p.ms>30000)throw new ConsoleError('INVALID_WAIT','等待时间必须在 0–30000 ms');await wait(p.ms,signal);return null;}
-    if(method==='node'){await this.device.collect();const n=this.device.find(p.selector);return this.device.nodeAction(owner,{id:n.id,fingerprint:n.fingerprint},p.action,p.value,taskId);}
+    if(method==='node'){const options=resolveClickOptions(p.clickOptions,clickOptions);await this.device.collect();const n=this.device.find(p.selector);return this.device.nodeAction(owner,{id:n.id,fingerprint:n.fingerprint},p.action,p.value,taskId,options);}
     if(method==='press'){const code=keyCodes[p.key];if(code===undefined)throw new ConsoleError('INVALID_KEY','不支持的按键名');return this.device.press(owner,code,0,taskId);}
     if(method==='gesture')return this.device.gesture(owner,p.kind,p,taskId,signal);
     if(method==='apps'){const state=await this.device.appState(!!p.refresh);return state.catalog.apps.filter(a=>!p.launchableOnly||a.launchers.length);}
