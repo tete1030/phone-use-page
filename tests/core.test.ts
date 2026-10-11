@@ -180,3 +180,8 @@ test('loss of injection capability denies new DOWN and cancels an existing hold'
   f.device.state.controlAvailable=true;f.stream.receive({...f.message(0,0),gesture:randomUUID()});await f.stream.drain();f.device.state.controlAvailable=false;
   f.stream.keepalive(f.replies.at(-1).gesture);await f.stream.drain();assert.deepEqual(f.events.map(p=>p.action),[0,1]);assert.equal(f.device.touching,false);
 });
+test('repeated video configuration preserves a hold and a real resize releases it',async()=>{
+  const f=touchFixture();await f.device.video.touch(0,10n,20,20);
+  (f.device.video as any).updateDimensions(864,1920);await f.device.video.releaseKeys();assert.deepEqual(f.events.map(p=>p.action),[0]);
+  (f.device.video as any).updateDimensions(1920,864);await f.device.video.releaseTouches();assert.deepEqual(f.events.map(p=>p.action),[0,1]);
+});

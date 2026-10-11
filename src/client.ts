@@ -85,7 +85,7 @@ async function initialize() {
   const interactive=()=>online&&!waking&&powerKnown()&&observation.screenOn&&observation.locked===false;
   const touchReady=()=>interactive()&&control?.readyState===1&&observation.controlAvailable&&controlAllowed&&!taskBusy&&!appsBusy&&!textPending&&!!videoManager?.active()&&lastDisplayedFrameAt!==null&&lastDisplayedFrameAt>=frameRequiredAfter;
   function fit(){if(touch?.active())touch.cancel('页面尺寸已变化，手势已释放');app.style.transform='none';root.style.width='100%';root.style.height=(visualViewport?.height||innerHeight)+'px';fitPhone();}
-  addEventListener('resize',fit);visualViewport?.addEventListener('resize',fit);
+  addEventListener('resize',fit);addEventListener('orientationchange',fit);visualViewport?.addEventListener('resize',fit);
   function fitPhone(){if(touch?.active())return;const stage=q<HTMLElement>('.phone-stage');const ratio=meta.width&&meta.height?meta.width/meta.height:observation.width/observation.height;
     if(!Number.isFinite(ratio)||ratio<=0)return;
     if(!mobile.matches)app.style.setProperty('--phone-column',Math.min(innerWidth*.46,(innerHeight-52)*ratio+16)+'px');

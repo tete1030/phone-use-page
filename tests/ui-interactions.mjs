@@ -165,6 +165,9 @@ try {
   assert.equal(await page.evaluate(()=>window.__messages.filter(m=>m.type==='touch-cancel').length),1);await page.mouse.up();await page.evaluate(()=>window.__ackDisabled=false);
   checks.push({name:'missing acknowledgements cancel gesture without replay'});
 
+  await reset();await page.mouse.move(center.x,center.y);await page.mouse.down();await page.evaluate(()=>window.dispatchEvent(new Event('orientationchange')));await page.mouse.up();
+  assert.equal(await page.evaluate(()=>window.__messages.filter(m=>m.type==='touch-cancel').length),1);checks.push({name:'client orientation change cancels old coordinate mapping'});
+
   await page.locator('.video-network summary').click();
   await page.waitForFunction(()=>document.querySelector('.video-network-data').textContent.includes('"fixture": true'));
   const diagnosis=await page.locator('.video-network-data').textContent();

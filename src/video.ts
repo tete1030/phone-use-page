@@ -58,7 +58,7 @@ export class Video extends EventEmitter {
     client.exited.then(() => {if(this.client===client){this.client=undefined;this.hardware=undefined;this.keyboardBackend='unavailable';this.config=undefined;this.emit('status','scrcpy connection closed');for(const ws of this.viewers)ws.close(1012,'Device stream closed');}}).catch(()=>{});
     const video = await client.videoStream;
     this.width=video.width;this.height=video.height;this.codec=video.metadata.codec;
-    video.sizeChanged(size=>{this.width=size.width;this.height=size.height;void this.releaseTouches().catch(()=>{});this.sendMetadata();});
+    video.sizeChanged(size=>this.updateDimensions(size.width,size.height));
     this.sendMetadata();this.emit('status',null);
     void this.consume(video.stream);
   }
@@ -67,6 +67,9 @@ export class Video extends EventEmitter {
     try { while(true){const {done,value}=await reader.read();if(done)break;
       this.publishPacket(value);
     }} catch(error){this.emit('status',String(error));await this.close();}
+  }
+  private updateDimensions(width:number,height:number){const changed=width!==this.width||height!==this.height;this.width=width;this.height=height;
+    if(changed)void this.releaseTouches().catch(()=>{});this.sendMetadata();
   }
   get configuration(){return this.config?.subarray(10);}
   publishPacket(value:ScrcpyMediaStreamPacket){
