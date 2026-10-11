@@ -204,7 +204,7 @@ def restore_awake():
         return {'enabled': False}
     saved = json.loads(state_path.read_text())
     current = connect().shell(['settings', 'get', 'global', 'stay_on_while_plugged_in']).output.strip()
-    if current == '3':
+    if current == saved.get('applied', '3'):
         command = ['settings', 'delete', 'global', 'stay_on_while_plugged_in'] if saved['original'] == 'null' else ['settings', 'put', 'global', 'stay_on_while_plugged_in', saved['original']]
         connect().shell(command)
     state_path.unlink()
@@ -222,11 +222,14 @@ def invoke(method, params):
             if original != 'null' and not original.isdigit():
                 raise RuntimeError('Cannot establish original power setting')
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps({'original': original}))
+            path.write_text(json.dumps({'original': original, 'applied': '7'}))
             path.chmod(0o600)
-        d.shell(['settings', 'put', 'global', 'stay_on_while_plugged_in', '3'])
+        saved = json.loads(path.read_text())
+        saved['applied'] = '7'
+        path.write_text(json.dumps(saved))
+        d.shell(['settings', 'put', 'global', 'stay_on_while_plugged_in', '7'])
         actual = d.shell(['settings', 'get', 'global', 'stay_on_while_plugged_in']).output.strip()
-        if actual != '3':
+        if actual != '7':
             raise RuntimeError('Phone did not accept stay-awake setting')
         return {'enabled': True}
     if method == 'summary':
@@ -279,31 +282,40 @@ def invoke(method, params):
         obj, info, bounds = text_object(params['selector'], params.get('instance', 0), params['bounds'])
         obj.click()
         return {'execution': 'sent'}
-    if method == 'setText':
-        if params.get('requireFocus'):
-            focus = focused()
-            node = focus.get('node') if focus else None
-            if not node or node['id'] != params.get('targetId'):
-                raise AppStateError('FOCUS_CHANGED', 'Phone text focus changed before queued write')
-            if node['text'] != params.get('expectedText'):
-                raise AppStateError('TEXT_CONFLICT', 'Phone text changed before queued write')
+    if method in ('readText', 'setText'):
         window = current_window()
+        if params.get('windowId') and window != params['windowId']:
+            raise AppStateError('STALE_TARGET', 'Target window changed before text operation')
         obj, info, bounds = text_object(params['selector'], params.get('instance', 0), params['bounds'])
         if info.get('password'):
-            raise RuntimeError('Password fields cannot use the mirrored text session')
-        b = info.get('visibleBounds') or info['bounds']
-        bounds = [b['left'], b['top'], b['right'], b['bottom']]
+            raise AppStateError('PASSWORD_FIELD', 'Password fields cannot use text replacement or readback')
         if bounds != params['bounds']:
-            raise RuntimeError('Target bounds changed before text write')
+            raise AppStateError('STALE_TARGET', 'Target bounds changed before text operation')
+        if current_window() != window:
+            raise AppStateError('STALE_TARGET', 'Window changed before text operation')
+        if method == 'readText':
+            text = d.jsonrpc.getText(obj.selector) or ''
+            if current_window() != window:
+                raise AppStateError('STALE_TARGET', 'Window changed during text read')
+            return {'text': text}
         if params['text']:
             if d.jsonrpc.setText(obj.selector, params['text']) is False:
                 raise AppStateError('TEXT_WRITE_UNSUPPORTED', 'This widget does not support replacing text')
         else:
             d.jsonrpc.clearTextField(obj.selector)
-        if current_window() != window:
-            raise AppStateError('TEXT_VERIFY_FAILED', 'Window changed during text write')
-        obj, info, actual = text_object(params['selector'], params.get('instance', 0), params['bounds'], False)
-        return {'written': True, 'text': d.jsonrpc.getText(obj.selector) or ''}
+        # Read the original target; autofocus advancing to another field is not a failed write.
+        try:
+            if current_window() != window:
+                return {'written': True, 'verification': 'inconclusive'}
+            obj, info, actual = text_object(params['selector'], params.get('instance', 0), params['bounds'], False)
+            if actual != params['bounds'] or info.get('password'):
+                return {'written': True, 'verification': 'inconclusive'}
+            text = d.jsonrpc.getText(obj.selector) or ''
+            if current_window() != window:
+                return {'written': True, 'verification': 'inconclusive'}
+            return {'written': True, 'text': text, 'verification': 'verified' if text == params['text'] else 'failed'}
+        except Exception:
+            return {'written': True, 'verification': 'inconclusive'}
     if method == 'openApp':
         return applications.open_app(params['packageName'], params.get('component'))
     if method == 'screenshot':

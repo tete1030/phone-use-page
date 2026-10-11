@@ -13,12 +13,10 @@ export interface Observation {
   snapshotId: string; collectedAt: number; nodes: AndroidNode[];
   windowId?: string; uiElapsedMs?: number;
   foregroundApp: string; focus: AndroidNode | null; focusEpoch: number;
-  focusCollectedAt?: number;
-  powerCollectedAt?:number; focusReason?:string|null; keyboardBackend?:string; keepAwake?:boolean; keepAwakeError?:string; summary?:{battery:number|null;charging:boolean;inputMethod:string;network:string};
+  powerCollectedAt?:number; powerError?:string|null; focusReason?:string|null; keyboardBackend?:string; keepAwake?:boolean; keepAwakeError?:string; summary?:{battery:number|null;charging:boolean;inputMethod:string;network:string};
   uiError: string | null; videoError: string | null; controlAvailable: boolean;
 }
 export interface Target { id: string; fingerprint: string; snapshotId?: string }
-export interface TextBinding { target: Target; focusEpoch: number }
 export interface ActionResult { execution?:'sent';verification?:'verified'|'not_verified'|'inconclusive'|'failed';requestId: string; status: 'ok'; backend: string; snapshotId: string; result?: unknown; jitter?:boolean; point?:{x:number;y:number} }
 export interface Selector { text?: string; resourceId?: string; description?: string; className?: string; package?: string }
 export interface AppEntry {packageName:string;thirdParty:boolean;launchers:string[]}
@@ -27,5 +25,6 @@ export interface AndroidTask {taskId:number;userId:number;type:string;baseCompon
 export interface Navigation {userId:number;collectedAt:number;locked:boolean|null;current:{taskId:number;userId:number;component:string}|null;tasks:AndroidTask[];internalStack:'unknown'}
 export interface ApplicationState {catalog:{userId:number;collectedAt:number;apps:AppEntry[]};navigation:Navigation;processes:{packageName:string;processes:{pid:number;uid:string;name:string}[]}[];collectedAt:number;processScope:string}
 export class ConsoleError extends Error {
+  execution?:'sent';verification?:ActionResult['verification'];
   constructor(public code: string, message: string, public status = 400) { super(message); }
 }

@@ -31,10 +31,12 @@ const checks=[];
 try {
   browser=await chromium.launch({executablePath:process.env.CHROME_PATH||'/opt/google/chrome/chrome',headless:true,args:['--no-sandbox']});
   const context=await browser.newContext({viewport:{width:1919,height:998},permissions:['clipboard-read','clipboard-write']});
-  await context.addInitScript(()=>{
-    window.__messages=[];window.__phoneText='初始';window.__writes=[];window.__presses=[];window.__nodeActions=[];window.__taskRequests=[];
+  await context.addInitScript((initial)=>{
+    window.__state=initial;window.__messages=[];window.__phoneText='初始';window.__writes=[];window.__reads=[];window.__presses=[];window.__nodeActions=[];window.__taskRequests=[];
     window.__sockets=[];
     window.__offers=0;
+    window.__observe=state=>{window.__state=state;for(const socket of window.__sockets)if(socket.url.includes('/ws/events'))socket.onmessage?.({data:JSON.stringify({type:'observation',state,controlAllowed:true,taskBusy:false})});};
+    setInterval(()=>{if(window.__powerPaused)return;for(const socket of window.__sockets)if(socket.url.includes('/ws/events'))socket.onmessage?.({data:JSON.stringify({type:'power',screenOn:window.__state.screenOn,locked:window.__state.locked,powerCollectedAt:Date.now()})});},1000);
     window.__clockOffset=0;
     const nativeNow=performance.now.bind(performance);
     performance.now=()=>nativeNow()+window.__clockOffset;
@@ -67,10 +69,18 @@ try {
       if(!path.startsWith('/api/'))return originalFetch(url,options);
       let data={};
       if(path==='/api/press')window.__presses.push(JSON.parse(options.body));
-      if(path==='/api/node')window.__nodeActions.push(JSON.parse(options.body));
+      if(path==='/api/node'){
+        const body=JSON.parse(options.body);window.__nodeActions.push(body);
+        if(body.action==='setText'){
+          window.__writes.push(body);await new Promise(r=>setTimeout(r,100));
+          if(window.__failNextWrite){window.__failNextWrite=false;return new Response(JSON.stringify({error:{code:'STALE_TARGET',message:'目标已改变，未发送'}}),{status:409});}
+          window.__phoneText=body.value;
+          if(window.__advanceFocus){window.__advanceFocus=false;window.__observe({...window.__state,nodes:window.__state.nodes.map(n=>({...n,focused:false})),focus:null,focusEpoch:1});}
+          data={verification:'verified'};
+        }
+      }
+      if(path==='/api/node/text'){window.__reads.push(JSON.parse(options.body));data={text:window.__phoneText};}
       if(path==='/api/tasks'){window.__taskRequests.push(JSON.parse(options.body));data={id:'fixture-script',startedAt:Date.now(),status:'completed',steps:0,logs:[],result:null};}
-      if(path==='/api/binding')data={binding:{target:{id:'field1',fingerprint:'stable',snapshotId:'fixture'},focusEpoch:0},text:window.__phoneText};
-      if(path==='/api/text'){const body=JSON.parse(options.body);window.__writes.push(body);await new Promise(r=>setTimeout(r,100));if(body.expectedText!==window.__phoneText)return new Response(JSON.stringify({error:{code:'TEXT_CONFLICT',message:'fixture conflict'}}),{status:409});window.__phoneText=body.text;data={text:body.text,focusEpoch:0,verification:'verified'};}
       if(path==='/api/connection/connect')data={connectionId:'fixture'};
       if(path==='/api/app-state')data={collectedAt:Date.now(),catalog:{apps:[]},processes:[],navigation:{locked:false,current:null,tasks:[]}};
       if(path==='/api/webrtc/config')data={provider:'coturn',availableProviders:['coturn'],iceTransportPolicy:'relay',iceServers:[{urls:'turns:fixture.invalid:8443?transport=tcp'}],renewAfterMs:null};
@@ -80,32 +90,59 @@ try {
       if(path==='/api/webrtc/status')data={state:'connected',fixture:true};
       return new Response(JSON.stringify(data),{status:200,headers:{'Content-Type':'application/json'}});
     };
-  });
+  },observation);
   const page=await context.newPage(),errors=[];
   page.on('pageerror',error=>errors.push(String(error)));
   await page.goto(origin);
   await page.waitForFunction(()=>document.querySelector('.page-status').textContent==='在线'&&document.querySelector('.phone').dataset.iceMode==='relay');
   await page.waitForTimeout(100);
-  await page.waitForFunction(()=>!document.querySelector('.screen-proxy').hidden);
-  const proxy=page.getByRole('textbox',{name:'手机输入框：search',exact:true});
-  await proxy.fill('中文 abc 😀');assert.equal(await page.locator('.run').isDisabled(),true);assert.equal(await page.locator('[data-press=BACK]').isDisabled(),true);await page.waitForFunction(()=>window.__phoneText==='中文 abc 😀');
-  await page.waitForFunction(()=>document.querySelector('.sync-status').textContent.includes('已确认'));
-  assert.equal(await page.locator('.text-input').inputValue(),'中文 abc 😀');
-  await proxy.fill('');await page.waitForFunction(()=>window.__phoneText==='');
-  await proxy.pressSequentially('abc');await page.waitForFunction(()=>window.__phoneText==='abc');
-  await proxy.press('Enter');await page.waitForFunction(()=>window.__presses.some(p=>p.key==='ENTER'&&p.binding?.target.id==='field1'));
+  const draft=page.getByRole('textbox',{name:'待填写文字（网页草稿）',exact:true});
+  assert.equal(await page.locator('.screen-proxy,.sync-toggle,.rebind').count(),0);
+  assert.equal(await draft.inputValue(),'');
+  await draft.fill('中文 abc 😀');await page.waitForTimeout(250);
+  assert.equal(await page.evaluate(()=>window.__writes.length),0);
+  assert.equal(await page.locator('.run').isEnabled(),true);assert.equal(await page.locator('[data-press=BACK]').isEnabled(),true);
+  await page.evaluate(()=>{window.__phoneText='手机改字';window.__observe({...window.__state,nodes:window.__state.nodes.map(n=>({...n,text:'手机改字',fingerprint:'updated'}))});});
+  assert.equal(await draft.inputValue(),'中文 abc 😀');
+  await draft.press('Enter');assert.equal(await page.evaluate(()=>window.__presses.some(p=>p.key==='ENTER')),false);
+  await draft.fill('中文 abc 😀');await page.locator('.text-submit').click();
+  await page.waitForFunction(()=>document.querySelector('.text-status').textContent.includes('已填写'));
+  assert.equal(await page.evaluate(()=>window.__phoneText),'中文 abc 😀');assert.equal(await page.evaluate(()=>window.__writes.length),1);
+  await page.waitForTimeout(250);assert.equal(await page.evaluate(()=>window.__writes.length),1);
+  await draft.fill('');await page.locator('.text-submit').click();await page.waitForFunction(()=>window.__phoneText==='');
+  await page.waitForFunction(()=>!document.querySelector('.text-submit').disabled);
+  await draft.pressSequentially('abc');await page.waitForTimeout(250);assert.equal(await page.evaluate(()=>window.__phoneText),'');
+  await page.locator('.text-submit').click();await page.waitForFunction(()=>window.__phoneText==='abc');await page.waitForFunction(()=>!document.querySelector('.text-submit').disabled);
+  await draft.fill('next');
+  await page.evaluate(()=>{const first={...window.__state.nodes[0],focused:false};const second={...first,id:'field2',resourceId:'fixture:id/other',focused:true};window.__observe({...window.__state,nodes:[first,second],focus:second,focusEpoch:1});});
+  assert.equal(await page.locator('.text-submit').isDisabled(),true);assert.equal(await page.locator('.text-target').inputValue(),'');assert.equal(await draft.inputValue(),'next');
+  await page.locator('.text-target').selectOption('field2');await page.locator('.text-submit').click();await page.waitForFunction(()=>window.__phoneText==='next');
+  await page.waitForFunction(()=>!document.querySelector('.text-submit').disabled);assert.equal(await page.evaluate(()=>window.__writes.at(-1).target.id),'field2');
+  await page.evaluate(()=>window.__phoneText='读回😀');await page.locator('.text-read').click();await page.getByRole('button',{name:'确认执行',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('.text-input').value==='读回😀');assert.equal(await page.evaluate(()=>window.__writes.length),4);
+  await page.evaluate(()=>window.__phoneText='之后手机改字');await page.waitForTimeout(250);assert.equal(await draft.inputValue(),'读回😀');
+  await page.evaluate(()=>window.__failNextWrite=true);await page.locator('.text-submit').click();await page.waitForFunction(()=>document.querySelector('.text-status').textContent.includes('STALE_TARGET'));
+  await page.waitForTimeout(250);assert.equal(await page.evaluate(()=>window.__writes.length),5);assert.equal(await draft.inputValue(),'读回😀');assert.equal(await page.locator('[data-press=BACK]').isEnabled(),true);
+  await page.locator('.text-target').selectOption('field1');await draft.fill('原字段');await page.evaluate(()=>window.__advanceFocus=true);await page.locator('.text-submit').click();
+  await page.waitForFunction(()=>document.querySelector('.text-status').textContent.includes('已填写'));
+  assert.equal(await page.evaluate(()=>window.__writes.at(-1).target.id),'field1');
+  const screenRect=await page.locator('.video-canvas').boundingBox();await page.mouse.click(screenRect.x+screenRect.width/2,screenRect.y+screenRect.height/2);await page.keyboard.press('Escape');
+  assert.equal(await draft.evaluate(node=>document.activeElement===node),true);
+  await page.evaluate(()=>{window.__powerPaused=true;window.__observe({...window.__state,powerCollectedAt:Date.now()-20000});});
+  assert.equal(await page.locator('.device-status').textContent(),'正在读取手机状态');assert.equal(await page.locator('.text-submit').isDisabled(),true);
+  await page.evaluate(()=>{window.__powerPaused=false;window.__observe({...window.__state,powerCollectedAt:Date.now()});});
   const jitter=page.getByRole('checkbox',{name:'元素动作与 JS 随机落点'});
   assert.equal(await jitter.isChecked(),true);
-  await page.locator('.node-button').click();await page.locator('.inspect-click').click();
-  await page.waitForFunction(()=>window.__nodeActions.length===1);
-  assert.equal(await page.evaluate(()=>window.__nodeActions[0].clickOptions.jitter),true);
+  await page.locator('.node-button').first().click();await page.locator('.inspect-click').click();
+  await page.waitForFunction(()=>window.__nodeActions.filter(n=>n.action==='click').length===1);
+  assert.equal(await page.evaluate(()=>window.__nodeActions.filter(n=>n.action==='click')[0].clickOptions.jitter),true);
   await jitter.uncheck();await page.locator('.inspect-click').click();
-  await page.waitForFunction(()=>window.__nodeActions.length===2);
-  assert.equal(await page.evaluate(()=>window.__nodeActions[1].clickOptions.jitter),false);
+  await page.waitForFunction(()=>window.__nodeActions.filter(n=>n.action==='click').length===2);
+  assert.equal(await page.evaluate(()=>window.__nodeActions.filter(n=>n.action==='click')[1].clickOptions.jitter),false);
   await page.locator('.code-input').fill('return await device.observe();');await page.locator('.run').click();
   await page.waitForFunction(()=>window.__taskRequests.length===1);
   assert.equal(await page.evaluate(()=>window.__taskRequests[0].clickOptions.jitter),false);
-  const writes=await page.evaluate(()=>window.__writes.map(w=>({length:w.text.length,expectedLength:w.expectedText.length})));
+  const writes=await page.evaluate(()=>window.__writes.map(w=>({length:w.value.length,target:w.target.id})));
   await page.reload();await page.waitForFunction(()=>document.querySelector('.page-status').textContent==='在线');
   assert.equal(await jitter.isChecked(),false);await jitter.check();
   for(const viewport of [{width:1600,height:900},{width:1919,height:998}]){await page.setViewportSize(viewport);await page.waitForTimeout(200);const geometry=await page.evaluate(()=>({w:document.documentElement.scrollWidth,h:document.documentElement.scrollHeight}));assert.ok(geometry.w<=viewport.width&&geometry.h<=viewport.height);await page.screenshot({path:`.local/agent-layout-${viewport.width}.png`});}
@@ -128,6 +165,6 @@ try {
   assert.equal(await page.locator('[data-video-mode][value=auto]').isChecked(),true);
   assert.equal(await page.locator('[data-video-mode][value=wss]').isDisabled(),true);
   assert.equal(await page.evaluate(()=>window.__sockets.some(ws=>ws.url.includes('/ws/video'))),false);
-  assert.deepEqual(errors,[]);const report={passed:true,checks:['automatic editable-semantic target','fill Unicode','pending text blocks phone and JS actions','fill empty','type append','proxy Enter commits to the verified phone target','node jitter default and checkbox override','JS captures jitter setting','jitter setting survives reload','two viewport layouts','enlarge exit','video-only reconnect','accessible logout confirmation','WSS-only creates no WebRTC and resets unavailable saved mode','direct-only is selectable without TURN or WSS'],phoneAccessed:false,writes};
+  assert.deepEqual(errors,[]);const report={passed:true,checks:['one draft textbox without mirror controls','fill/type and Enter never send automatically','draft does not block navigation or JS','explicit Unicode/empty writes','phone changes never overwrite draft','focus change requires target selection','one-shot native read','failure preserves draft without retry','node jitter default and checkbox override','JS captures jitter setting','jitter setting survives reload','two viewport layouts','enlarge exit','video-only reconnect','accessible logout confirmation','WSS-only creates no WebRTC and resets unavailable saved mode','direct-only is selectable without TURN or WSS'],phoneAccessed:false,writes};
   await writeFile('.local/agent-ui-result.json',JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify(report));
 }finally{await browser?.close();await new Promise(resolve=>server.close(resolve));}

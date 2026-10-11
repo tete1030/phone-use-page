@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events';
 import { createHash, randomUUID } from 'node:crypto';
 import { Bridge } from './bridge.js';
 import { Video } from './video.js';
-import { ConsoleError, type AndroidNode, type Observation, type Selector, type Target, type TextBinding, type ApplicationState, type Navigation } from './types.js';
+import { ConsoleError, type AndroidNode, type Observation, type Selector, type Target, type ActionResult, type ApplicationState, type Navigation } from './types.js';
 import {nodeTouchPoint,resolveClickOptions,type ClickOptions} from './click-options.js';
 
 const pause=(ms:number)=>new Promise(resolve=>setTimeout(resolve,ms));
@@ -18,7 +18,7 @@ export class Device extends EventEmitter {
   private sessionActive=false;
   async setConnected(active:boolean){this.sessionActive=active;if(active){await this.video.start();await this.video.confirmKeyboard(await this.bridge.call<boolean>('keyboardPresent').catch(()=>false));this.state.keyboardBackend=this.video.keyboardBackend;this.state.controlAvailable=!!this.video.client?.controller;await this.setKeepAwake(true);try{await this.collect();}catch{}}else{await this.setKeepAwake(false);await this.video.close();this.state.controlAvailable=false;this.state.keyboardBackend='offline';}this.notify();}
   private stopped=false; private generation=0; private hash='';private foregroundTimer=0;
-  private focusTimer?: NodeJS.Timeout; private fullTimer?: NodeJS.Timeout; private leaseTimer?: NodeJS.Timeout;
+  private fullTimer?: NodeJS.Timeout; private leaseTimer?: NodeJS.Timeout;
   private summaryTimer?:NodeJS.Timeout;
   async setKeepAwake(enabled:boolean){try{await this.bridge.call('awake',{enabled});this.state.keepAwake=enabled;this.state.keepAwakeError=undefined;}catch(error){this.state.keepAwake=false;this.state.keepAwakeError=String(error);}this.notify();}
   private powerTimer?:NodeJS.Timeout;private readingPower?:Promise<void>;
@@ -31,11 +31,11 @@ export class Device extends EventEmitter {
   }
   private notify(){this.emit('observation',this.state);}
   publish(){this.notify();}
-  refreshPower():Promise<void>{if(this.readingPower)return this.readingPower;this.readingPower=this.bridge.call<{screenOn:boolean;locked:boolean|null}>('power').then(power=>{const changed=this.state.screenOn!==power.screenOn||this.state.locked!==power.locked;Object.assign(this.state,power,{powerCollectedAt:Date.now()});if(changed)this.emit('power',{...power,powerCollectedAt:this.state.powerCollectedAt});}).finally(()=>{this.readingPower=undefined;});return this.readingPower;}
+  refreshPower():Promise<void>{if(this.readingPower)return this.readingPower;this.readingPower=this.bridge.call<{screenOn:boolean;locked:boolean|null}>('power').then(power=>{const changed=this.state.screenOn!==power.screenOn||this.state.locked!==power.locked;Object.assign(this.state,power,{powerCollectedAt:Date.now(),powerError:null});if(changed)this.emit('power',{...power,powerCollectedAt:this.state.powerCollectedAt});}).catch(error=>{this.state.powerError='手机状态读取失败';this.notify();throw error;}).finally(()=>{this.readingPower=undefined;});return this.readingPower;}
   assertScreen(){if(!this.state.screenOn)throw new ConsoleError('SCREEN_OFF','屏幕已关闭，请点击手机画面亮屏',409);if(this.state.locked!==false)throw new ConsoleError('DEVICE_LOCKED',this.state.locked?'手机已锁屏，请在手机上解锁':'手机解锁状态未知，请稍后重试',409);}
   async ensureInteractive(){if(!this.state.powerCollectedAt||Date.now()-this.state.powerCollectedAt>1500)await this.refreshPower();this.assertScreen();}
   async wake(session:string,task?:string){return this.enqueue(session,async()=>{await this.video.start();this.claim(session,task);await this.video.press(keyCodes.WAKEUP!);await this.bridge.call('unlock',{},15000,()=>this.claim(session,task));for(let i=0;i<8;i++){await pause(150);this.claim(session,task);await this.refreshPower();if(this.state.screenOn&&this.state.locked===false)break;}return {status:this.state.screenOn&&this.state.locked===false?'ok':'unlock_required',execution:'sent',verification:this.state.screenOn&&this.state.locked===false?'verified':'failed',screenOn:this.state.screenOn,locked:this.state.locked};},task);}
-  async press(session:string,code:number,meta=0,task?:string,expectedFocus?:TextBinding){if(code===keyCodes.WAKEUP)return this.wake(session,task);return this.enqueue(session,async()=>{await this.ensureInteractive();this.claim(session,task);if(expectedFocus){await this.readFocus();if(this.state.focus?.id!==expectedFocus.target.id||this.state.focusEpoch!==expectedFocus.focusEpoch)throw new ConsoleError('FOCUS_CHANGED','手机焦点已改变，未发送提交按键',409);}if(code===keyCodes.PASTE){await this.readFocus();if(!this.state.focus)throw new ConsoleError('NO_EDITABLE_FOCUS','粘贴前需确认手机文本焦点',409);}await this.video.press(code,meta);await this.afterApplicationAction();return {status:'ok',execution:'sent',verification:'not_verified',snapshotId:this.state.snapshotId};},task);}
+  async press(session:string,code:number,meta=0,task?:string){if(code===keyCodes.WAKEUP)return this.wake(session,task);return this.enqueue(session,async()=>{await this.ensureInteractive();this.claim(session,task);if(code===keyCodes.PASTE){await this.collect();if(!this.state.focus)throw new ConsoleError('NO_EDITABLE_FOCUS','粘贴前需确认手机文本焦点',409);}await this.video.press(code,meta);await this.afterApplicationAction();return {status:'ok',execution:'sent',verification:'not_verified',snapshotId:this.state.snapshotId};},task);}
   async start() {
     try{await this.setKeepAwake(false);Object.assign(this.state,await this.bridge.call('info'));await this.refreshPower();await this.collect();}catch(error){this.state.uiError=String(error);}
 
@@ -43,8 +43,6 @@ export class Device extends EventEmitter {
     this.notify();
     const poll=async()=>{if(this.stopped)return;if(this.sessionActive)try{await this.collect();if(!this.video.client){await this.video.start();await this.video.confirmKeyboard(await this.bridge.call<boolean>('keyboardPresent').catch(()=>false));this.state.keyboardBackend=this.video.keyboardBackend;}}catch{}this.fullTimer=setTimeout(poll,1500);};
     this.fullTimer=setTimeout(poll,1500);
-    const focus=async()=>{if(this.stopped)return;if(this.sessionActive&&!this.state.uiError)try{await this.readFocus();}catch{}this.focusTimer=setTimeout(focus,this.state.focus?350:1000);};
-    this.focusTimer=setTimeout(focus,500);
     const power=async()=>{if(this.stopped)return;if(this.sessionActive)try{await this.refreshPower();}catch{}if(!this.stopped)this.powerTimer=setTimeout(power,2000);};this.powerTimer=setTimeout(power,1000);
     this.leaseTimer=setInterval(()=>{if(this.owner&&Date.now()>this.leaseUntil&&!this.activeTask){this.owner=undefined;void this.video.release();this.notify();}},2000);
   }
@@ -61,25 +59,10 @@ export class Device extends EventEmitter {
       const recentPower=await this.refreshPower().then(()=>({screenOn:this.state.screenOn,locked:this.state.locked})).catch(()=>({screenOn:result.screenOn,locked:result.locked}));
       Object.assign(this.state,{connected:true,nodes:result.nodes,width:result.width,height:result.height,rotation:result.rotation,...recentPower,windowId:result.windowId,uiElapsedMs:result.elapsedMs,collectedAt:Date.now(),uiError:null});
       this.state.foregroundApp=result.nodes.find(n=>n.package&&!n.package.startsWith('com.android.systemui'))?.package||result.nodes[0]?.package||'';
-      this.state.focusReason=null;this.state.focus=result.nodes.find(n=>n.focused&&n.editable&&!n.password)||null;
+      const fields=result.nodes.filter(n=>n.focused&&n.editable&&!n.password);this.state.focus=fields.length===1?fields[0]!:null;this.state.focusReason=fields.length>1?'AMBIGUOUS_FOCUS':fields.length===1?null:'NO_EDITABLE_FOCUS';
       if(previousFocus!==this.state.focus?.id)this.state.focusEpoch++;
       this.notify();return this.state;
     } catch(error){this.state.connected=false;this.state.foregroundApp='';this.state.uiError=String(error);if(this.state.focus){this.state.focus=null;this.state.focusEpoch++;}this.notify();throw error;}
-  }
-  private async readFocus() {
-    const info=await this.bridge.call<any>('focus',{},5000);
-    this.state.focusCollectedAt=Date.now();
-    const notify=()=>this.emit('focus',{focus:this.state.focus,focusEpoch:this.state.focusEpoch,focusCollectedAt:this.state.focusCollectedAt,focusReason:this.state.focusReason,snapshotId:this.state.snapshotId});
-    this.state.focusReason=info?.reason||null;
-    if(!info?.editable||info.password){if(this.state.focus){this.state.focus=null;this.state.focusEpoch++;}notify();return;}
-    const bounds=info.bounds?[info.bounds.left,info.bounds.top,info.bounds.right,info.bounds.bottom]:null;
-    const matches=this.state.nodes.filter(n=>n.editable&&(info.resourceId?n.resourceId===info.resourceId&&n.package===(info.package||info.node?.package):n.className===info.className&&(!bounds||JSON.stringify(n.bounds)===JSON.stringify(bounds))));
-    if(matches.length!==1){this.state.focusReason='AMBIGUOUS_FOCUS';if(this.state.focus){this.state.focus=null;this.state.focusEpoch++;notify();}return;}
-    const old=matches[0]!,node=(info.node?.id===old.id?info.node:{...old,text:info.text??''}) as AndroidNode;
-    const changed=this.state.focus?.id!==node.id||old.fingerprint!==node.fingerprint||old.text!==node.text;
-    if(this.state.focus?.id!==node.id)this.state.focusEpoch++;
-    this.state.nodes[this.state.nodes.findIndex(n=>n.id===node.id)]=node;this.state.focus=node;
-    if(changed){this.hash=createHash('sha256').update(JSON.stringify(this.state.nodes)).digest('hex');this.state.snapshotId='ui-'+(++this.generation);notify();}
   }
   claim(session:string,task?:string) {
     this.authorize(session);
@@ -119,14 +102,14 @@ export class Device extends EventEmitter {
     const options=resolveClickOptions(clickOptions);
     return this.enqueue(session,async()=>{
       await this.ensureInteractive();
-      const n=await this.target(target);let point:{x:number;y:number}|undefined;
+      const n=await this.target(target);let textVerification:ActionResult['verification'];let point:{x:number;y:number}|undefined;
       const touch=async(duration=60)=>{point=nodeTouchPoint(n,this.state.width,this.state.height,options.jitter);await this.tapAt(point.x,point.y,duration);};
       this.claim(session,task);
       if(action!=='setText'&&!this.state.controlAvailable)throw new ConsoleError('NO_CONTROL','设备未允许触摸或按键注入',503);
       if(action==='setText') {
         if(!n.editable||n.password||typeof value!=='string'||value.length>32768)throw new ConsoleError('UNSUPPORTED_ACTION','该节点不支持文本替换');
-        const confirmation=await this.bridge.call('setText',{selector:n.selector,instance:n.instance,bounds:n.bounds,text:value},15000,()=>{this.claim(session,task);this.assertScreen();});
-        if(confirmation.text!==value)throw new ConsoleError('TEXT_VERIFY_FAILED','手机文字未达到期望值，请核对输入框',409);
+        const confirmation=await this.bridge.call('setText',{selector:n.selector,instance:n.instance,bounds:n.bounds,windowId:this.state.windowId,text:value},15000,()=>{this.claim(session,task);this.assertScreen();});
+        textVerification=confirmation.verification||('text' in confirmation?(confirmation.text===value?'verified':'failed'):'inconclusive');
       } else if(action==='setChecked') {
         if(!n.checkable||!n.clickable||typeof value!=='boolean')throw new ConsoleError('UNSUPPORTED_ACTION','该节点未报告可用开关能力');
         if(n.checked!==value)await touch();
@@ -134,30 +117,21 @@ export class Device extends EventEmitter {
       else if(action==='click') {if(!n.clickable)throw new ConsoleError('UNSUPPORTED_ACTION','节点未报告点击能力');await touch();}
       else if(action==='longPress') {if(!n.longClickable)throw new ConsoleError('UNSUPPORTED_ACTION','节点未报告长按能力');await touch(typeof value==='number'?Math.min(Math.max(value,400),3000):700);}
       else throw new ConsoleError('UNSUPPORTED_ACTION','不支持的节点动作');
-      await pause(100);await this.collect();
+      await pause(100);if(action==='setText')await this.afterApplicationAction();else await this.collect();
+      if(action==='setText'&&textVerification!=='verified'){
+        const error=new ConsoleError(textVerification==='failed'?'TEXT_VERIFY_FAILED':'TEXT_RESULT_UNKNOWN',textVerification==='failed'?'填写已发送，但手机文字与原文不同；请检查手机，不会自动重试':'填写已发送，无法确认原目标内容；请先观察手机，不要直接重试',409);
+        error.execution='sent';error.verification=textVerification;throw error;
+      }
       if(action==='setChecked'){const current=this.state.nodes.find(x=>x.id===n.id);if(!current||current.checked!==value)throw new ConsoleError('VERIFY_FAILED','开关状态未达到期望值，请观察手机',409);}
-      return {requestId:randomUUID(),status:'ok',execution:'sent',verification:['setText','setChecked'].includes(action)?'verified':action==='focus'&&this.state.focus?.id===n.id?'verified':'not_verified',backend:action==='setText'?'uiautomator2.setText':action==='focus'?'uiautomator2.focus':'scrcpy-coordinate-compatibility',...(point?{jitter:options.jitter,point}:{}),snapshotId:this.state.snapshotId};
+      return {requestId:randomUUID(),status:'ok',execution:'sent',verification:action==='setText'?textVerification:action==='setChecked'?'verified':action==='focus'&&this.state.focus?.id===n.id?'verified':'not_verified',backend:action==='setText'?'uiautomator2.setText':action==='focus'?'uiautomator2.focus':'scrcpy-coordinate-compatibility',...(point?{jitter:options.jitter,point}:{}),snapshotId:this.state.snapshotId};
     },task);
   }
   async panel(session:string,kind:'notifications'|'settings',task?:string){return this.enqueue(session,async()=>{await this.ensureInteractive();await this.video.panel(kind);await this.afterApplicationAction();return {execution:'sent',verification:'not_verified',snapshotId:this.state.snapshotId};},task);}
-  binding():TextBinding {
-    const n=this.state.focus;if(!n||n.password)throw new ConsoleError('NO_EDITABLE_FOCUS','手机当前没有可读写的文本焦点',409);
-    return {target:{id:n.id,fingerprint:n.fingerprint,snapshotId:this.state.snapshotId},focusEpoch:this.state.focusEpoch};
-  }
-  async bindCurrent() {
-    await this.collect();await this.readFocus();
-    return {binding:this.binding(),text:this.state.focus!.text};
-  }
-  async boundText(session:string,binding:TextBinding,text:string,expectedText?:string) {
+  async readText(session:string,target:Target){
     return this.enqueue(session,async()=>{
-      await this.ensureInteractive();
-      await this.readFocus();const n=this.state.focus;
-      if(!n||n.id!==binding.target.id||this.state.focusEpoch!==binding.focusEpoch)throw new ConsoleError('FOCUS_CHANGED','手机文字焦点已改变，草稿未发送',409);
-      if(expectedText!==undefined&&n.text!==expectedText)throw new ConsoleError('TEXT_CONFLICT','手机文字已从其他输入路径改变，草稿未覆盖手机',409);
-      if(typeof text!=='string'||text.length>32768)throw new ConsoleError('TEXT_LIMIT','文字过长');
-      const confirmation=await this.bridge.call('setText',{selector:n.selector,instance:n.instance,bounds:n.bounds,text,requireFocus:true,targetId:n.id,expectedText:n.text},15000,()=>{this.claim(session);this.assertScreen();});
-      await this.readFocus();if(confirmation.text!==text||!this.state.focus||this.state.focus.id!==n.id||this.state.focusEpoch!==binding.focusEpoch||this.state.focus.text!==text)throw new ConsoleError('TEXT_VERIFY_FAILED','写入期间焦点或文字发生变化，请核对手机；草稿保留',409);
-      return {status:'ok',execution:'sent',verification:'verified',focusEpoch:this.state.focusEpoch,text:this.state.focus.text};
+      await this.ensureInteractive();const n=await this.target(target);
+      if(!n.editable||n.password)throw new ConsoleError('UNSUPPORTED_ACTION','该节点不支持读取文字');
+      return this.bridge.call<{text:string}>('readText',{selector:n.selector,instance:n.instance,bounds:n.bounds,windowId:this.state.windowId});
     });
   }
   async appState(refreshCatalog=false):Promise<ApplicationState> {
@@ -227,5 +201,5 @@ export class Device extends EventEmitter {
       await this.collect();return {status:'ok',snapshotId:this.state.snapshotId};
     },task);
   }
-  async stop(){this.stopped=true;clearTimeout(this.summaryTimer);await this.setKeepAwake(false);clearTimeout(this.fullTimer);clearTimeout(this.focusTimer);clearTimeout(this.powerTimer);clearInterval(this.leaseTimer);await this.video.close();this.bridge.close();}
+  async stop(){this.stopped=true;clearTimeout(this.summaryTimer);await this.setKeepAwake(false);clearTimeout(this.fullTimer);clearTimeout(this.powerTimer);clearInterval(this.leaseTimer);await this.video.close();this.bridge.close();}
 }

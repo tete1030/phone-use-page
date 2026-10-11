@@ -16,7 +16,7 @@
 | 主机系统 | 提供原生 Linux/macOS shell 流程，干净环境 CI 在 Linux 上运行。Windows 用户可使用已确认 USB 访问的 Linux 主机/虚拟机；提供的安装方案不涵盖原生 Windows 脚本及 Docker Desktop USB。macOS 原生 ADB 不需要 udev。 |
 | Docker 与用户 | USB Compose 使用 Linux 主机网络和 `/dev/bus/usb`。UID、GID 及 USB 访问组按实际环境提供，不假定为 1000/46 或 `plugdev`。非 Linux NAS、虚拟机或容器管理器需提供等效挂载和权限；不需要 DockerMan 或 Unraid API。 |
 | CPU 与依赖 | 手机原生 H.264 编码与主机 FFmpeg 软件编码是不同环节，可以关闭 WSS 自适应编码。其他架构的镜像/依赖可用性需自行验证；Linux x86 CI 不代表已验证 ARM、GPU 或所有 NAS 平台。 |
-| 浏览器与智能体 | WSS 需要支持 H.264 WebCodecs 的较新 Chromium，WebRTC 需要 H.264 解码。只看截图的智能体不能在视频上调用 `fill`；能操作 DOM 的智能体可填写真实手机文本框。浏览器可能单独限制 TURN 或 UDP 直连，即使普通 HTTPS 可用。 |
+| 浏览器与智能体 | WSS 需要支持 H.264 WebCodecs 的较新 Chromium，WebRTC 需要 H.264 解码。只看截图的智能体不能在视频上调用 `fill`；能操作 DOM 的智能体可填写网页草稿，再点击“填写到手机”执行一次替换。浏览器可能单独限制 TURN 或 UDP 直连，即使普通 HTTPS 可用。 |
 | DNS 与 TLS | 普通反向代理和自建 TURN 可使用任意 DNS/注册商及可信证书来源。证书名称、链和续期要匹配自己的主机名。Cloudflare TURN 不要求将控制台 DNS 迁移至 Cloudflare。Cloudflare Tunnel 是独立可选产品，有自己的域名要求。 |
 | HTTPS 与代理 | 可使用任何正确保留 Host、原始协议和 WebSocket 升级的代理。需配置精确公网 origin、基础/ Cookie 路径及明确的可信代理 IP/CIDR。不将任意局域网 HTTP 视为支持的远程访问入口；使用 HTTPS 或 localhost 转发。 |
 | 网络拓扑 | 不假定路由器品牌、端口转发 API、公网 IPv4 或入站 80/443 可用。仅 WSS 可通过 HTTPS 代理/隧道工作，不需要 TURN 端口。自建 TURN 需真实可达；STUN 无法解决所有 NAT、CGNAT 或防火墙限制。 |

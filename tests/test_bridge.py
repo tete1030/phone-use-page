@@ -1,5 +1,8 @@
 import importlib.util
 import io
+import json
+import os
+import tempfile
 import sys
 import unittest
 from pathlib import Path
@@ -47,6 +50,57 @@ class BridgeTests(unittest.TestCase):
         self.device = DeviceFixture()
         bridge.device = self.device
         bridge.power_cache['at'] = 0
+
+    def test_one_shot_text_can_read_an_unfocused_unicode_field(self):
+        self.device.text = '中文😀'
+        params = {'selector': {'resourceId': 'package:id/input'}, 'instance': 0, 'bounds': [10, 10, 500, 100]}
+        result = bridge.invoke('readText', params)
+        self.assertEqual(result['text'], self.device.text)
+
+    def test_one_shot_write_verifies_original_field_and_handles_lost_readback(self):
+        params = {'selector': {'resourceId': 'package:id/input'}, 'instance': 0, 'bounds': [10, 10, 500, 100], 'text': '中文😀'}
+        for mode, expected in [('advance', 'verified'), ('window', 'inconclusive'), ('missing', 'inconclusive'), ('format', 'failed')]:
+            with self.subTest(mode=mode):
+                self.device = DeviceFixture()
+                bridge.device = self.device
+                calls = []
+                def write(selector, text):
+                    calls.append(text)
+                    self.device.text = 'formatted' if mode == 'format' else text
+                    if mode == 'window':
+                        self.device.window = 'different u0 package/Activity'
+                    return True
+                native = SimpleNamespace(setText=write, getText=lambda _: self.device.text)
+                obj = SimpleNamespace(selector=params['selector'])
+                lookup = [(obj, {'password': False}, params['bounds'])]
+                lookup.append(RuntimeError('Target vanished') if mode == 'missing' else lookup[0])
+                with patch.object(DeviceFixture, 'jsonrpc', native), patch.object(bridge, 'text_object', side_effect=lookup):
+                    result = bridge.invoke('setText', params)
+                self.assertEqual(result['verification'], expected)
+                self.assertEqual(calls, [params['text']])
+
+    def test_awake_covers_ac_usb_wireless_and_restores_only_owned_setting(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory) / 'awake.json'
+            value = ['1']
+            def shell(command):
+                if command[1] == 'get':
+                    return SimpleNamespace(output=value[0])
+                value[0] = command[-1]
+                return SimpleNamespace(output='')
+            self.device.shell = shell
+            with patch.dict(os.environ, {'CONSOLE_AWAKE_STATE': str(state)}):
+                bridge.invoke('awake', {'enabled': True})
+                self.assertEqual(value[0], '7')
+                bridge.invoke('awake', {'enabled': False})
+                self.assertEqual(value[0], '1')
+                bridge.invoke('awake', {'enabled': True})
+                value[0] = '3'
+                bridge.invoke('awake', {'enabled': False})
+                self.assertEqual(value[0], '3')
+                state.write_text(json.dumps({'original': '0'}))
+                bridge.invoke('awake', {'enabled': False})
+                self.assertEqual(value[0], '0')
 
     def test_display_dimensions_use_native_fallback_instead_of_a_phone_model_default(self):
         self.device.info = {'displayRotation': 1}
@@ -133,19 +187,20 @@ class BridgeTests(unittest.TestCase):
         with patch.object(bridge.time, 'sleep'), self.assertRaises(RuntimeError):
             bridge.current_window()
 
-    def test_queued_text_write_rechecks_native_text_before_mutating(self):
-        node = bridge.tree()['nodes'][-1]
-        self.device.text = '来自其他输入路径'
+    def test_queued_text_write_rechecks_bounds_before_mutating(self):
+        params = {'selector': {'resourceId': 'package:id/input'}, 'bounds': [20, 20, 500, 100], 'text': 'draft'}
         with self.assertRaises(bridge.AppStateError) as error:
-            bridge.invoke('setText', {'requireFocus': True, 'targetId': node['id'], 'expectedText': node['text']})
-        self.assertEqual(error.exception.code, 'TEXT_CONFLICT')
+            bridge.invoke('setText', params)
+        self.assertIn(error.exception.code, ('STALE_TARGET', 'FOCUS_CHANGED'))
+        self.assertEqual(self.device.text, '原始文本')
 
     def test_queued_text_write_rejects_a_new_window(self):
-        node = bridge.tree()['nodes'][-1]
+        params = {'selector': {'resourceId': 'package:id/input'}, 'bounds': [10, 10, 500, 100], 'windowId': self.device.window, 'text': 'draft'}
         self.device.window = 'other u0 package/Activity'
         with self.assertRaises(bridge.AppStateError) as error:
-            bridge.invoke('setText', {'requireFocus': True, 'targetId': node['id'], 'expectedText': node['text']})
-        self.assertEqual(error.exception.code, 'FOCUS_CHANGED')
+            bridge.invoke('setText', params)
+        self.assertEqual(error.exception.code, 'STALE_TARGET')
+        self.assertEqual(self.device.text, '原始文本')
 
     def test_empty_root_is_reported_once_instead_of_retried_as_a_success(self):
         calls = []

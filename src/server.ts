@@ -41,7 +41,7 @@ const serial=selectAndroidDevice(list.stdout,process.env.ANDROID_SERIAL);
 const device=new Device(serial,python,adb),tasks=new Tasks(device);await tasks.init();
 const mediaConfig=rtcConfig(process.env);
 const rtc=new ParallelWebRtcVideo(device.video,mediaConfig,new TurnCredentials(mediaConfig.turn,mediaConfig.stunUrl,await loadTurnKey(mediaConfig.turn)),mediaConfig.fallbackTurn?new TurnCredentials(mediaConfig.fallbackTurn,mediaConfig.stunUrl,await loadTurnKey(mediaConfig.fallbackTurn)):undefined);
-function syncVideoPower(){const state=device.state,reason=!state.powerCollectedAt?'power_unknown':!state.screenOn?'screen_off':state.locked!==false?'locked':null;rtc.setVideoPaused(reason!==null,reason);}
+function syncVideoPower(){const state=device.state,reason=state.powerError||!state.powerCollectedAt||Date.now()-state.powerCollectedAt>10000?'power_unknown':!state.screenOn?'screen_off':state.locked!==false?'locked':null;rtc.setVideoPaused(reason!==null,reason);}
 device.on('power',syncVideoPower);device.on('observation',syncVideoPower);syncVideoPower();
 const app=Fastify({bodyLimit:262144,logger:false,trustProxy:trustedProxies||false});await app.register(cookie);await app.register(websocket,{options:{maxPayload:65536}});await app.register(statics,{root:resolve('dist/web'),prefix:endpoint('/assets/')});
 const audit=new Audit(resolve(process.env.AUTH_DATA_DIR||'.local/auth','../audit'));
@@ -52,7 +52,7 @@ let activationTail:Promise<unknown>=Promise.resolve();
 function serialized<T>(work:()=>Promise<T>){const next=activationTail.then(work);activationTail=next.catch(()=>{});return next;}
 async function cleanup(connection:PageConnection){tasks.revokeOwner(connection.owner);await rtc.close(connection.owner);await device.drain().catch(()=>{});await device.release(connection.owner).catch(()=>{});await device.setConnected(false);if(device.owner===connection.owner){device.owner=undefined;device.publish();}}
 function disconnect(connection:PageConnection,reason:string){if(pages.active!==connection)return;pages.disconnect(connection,reason);tasks.revokeOwner(connection.owner);void serialized(()=>cleanup(connection)).catch(()=>{});}
-const pageTimer=setInterval(()=>{const c=pages.active;if(c?.online){if(!auth.getById(c.page.sessionId))disconnect(c,'LOGIN_REQUIRED');else if(pages.idle(c.owner))disconnect(c,'IDLE_TIMEOUT');else if(Date.now()-c.lastSeen>45000)disconnect(c,'CONNECTION_TIMEOUT');}},1000);
+const pageTimer=setInterval(()=>{const c=pages.active;if(c?.online){syncVideoPower();if(!auth.getById(c.page.sessionId))disconnect(c,'LOGIN_REQUIRED');else if(pages.idle(c.owner))disconnect(c,'IDLE_TIMEOUT');else if(Date.now()-c.lastSeen>45000)disconnect(c,'CONNECTION_TIMEOUT');}},1000);
 const originAllowed=(origin:string|undefined,requestHost:string|undefined)=>{
   if(!origin)return false;try{const u=new URL(origin);return publicOrigin?origin===publicOrigin:u.host===requestHost;}catch{return false;}
 };
@@ -65,7 +65,7 @@ const authHttp=installAuth(app,auth,{secure:!!publicOrigin,cookiePath:process.en
 const authenticate=authHttp.authenticate;
 const session=(req:any,mutating=false)=>{const s=authenticate(req,mutating),id=req.headers['x-console-page']||(req.query as any)?.page;const token=req.headers['x-console-connection']||(req.query as any)?.connection;const connection=pages.require(typeof id==='string'?id:undefined,s.id,typeof token==='string'?token:undefined);if(pages.idle(connection.owner)){disconnect(connection,'IDLE_TIMEOUT');throw new ConsoleError('PAGE_OFFLINE','5分钟无操作，已断开',409);}(req as any).auditOwner=connection.owner;return {...s,owner:connection.owner,connection};};
 app.addHook('preSerialization',async(req,reply,payload)=>{if(payload&&typeof payload==='object'&&'verification' in payload)(req as any).auditVerification=(payload as any).verification;const path=internalPath(req.url,basePath);if(reply.statusCode<400&&path.startsWith('/api/')&&!['/api/login','/api/logout','/api/auth/status','/api/connection/connect'].includes(path))session(req);return payload;});
-app.setErrorHandler((error:any,_req,reply)=>reply.code(error instanceof ConsoleError?error.status:error instanceof z.ZodError||error.validation?400:500).send({error:{code:error instanceof z.ZodError?'INVALID_REQUEST':error.code||'SERVER_ERROR',message:error.message}}));
+app.setErrorHandler((error:any,_req,reply)=>reply.code(error instanceof ConsoleError?error.status:error instanceof z.ZodError||error.validation?400:500).send({error:{code:error instanceof z.ZodError?'INVALID_REQUEST':error.code||'SERVER_ERROR',message:error.message},...(error.execution?{execution:error.execution,verification:error.verification}:{})}));
 app.get('/health',()=>({ok:true,sdk:SDK_VERSION}));
 if(basePath!=='/')app.get(endpoint('/health'),()=>({ok:true,sdk:SDK_VERSION}));
 app.get(endpoint('/'),async(req,reply)=>{
@@ -93,14 +93,13 @@ app.post(endpoint('/api/activity'),req=>{const s=session(req,true);pages.activit
 app.get(endpoint('/api/screenshot'),async(req,reply)=>{const s=session(req);const image=await device.bridge.call('screenshot');pages.requireOwner(s.owner);return reply.type(image.mime).header('Content-Disposition','attachment; filename=phone-'+Date.now()+'.'+(image.mime==='image/png'?'png':'jpg')).send(Buffer.from(image.data,'base64'));});
 app.post(endpoint('/api/panel'),async req=>{const s=session(req,true),p=z.object({requestId:z.string().uuid(),kind:z.enum(['notifications','settings'])}).parse(req.body);return once(req,()=>device.panel(s.owner,p.kind));});
 app.post(endpoint('/api/clipboard'),async req=>{const s=session(req,true),p=z.object({write:z.boolean().default(false),text:z.string().max(32768).optional()}).parse(req.body);pages.activity(s.owner);return device.enqueue(s.owner,async()=>{await device.ensureInteractive();return device.bridge.call('clipboard',p);});});
-app.post(endpoint('/api/binding'),async req=>{session(req,true);return device.bindCurrent();});
-app.post(endpoint('/api/text'),async req=>{const s=session(req,true);const p=z.object({binding:z.object({target:z.object({id:z.string(),fingerprint:z.string(),snapshotId:z.string().optional()}),focusEpoch:z.number().int()}),text:z.string().max(32768),expectedText:z.string().max(32768).optional()}).parse(req.body);pages.activity(s.owner);return device.boundText(s.owner,p.binding,p.text,p.expectedText);});
 const targetSchema=z.object({id:z.string().max(200),fingerprint:z.string().max(100),snapshotId:z.string().max(100).optional()});
+app.post(endpoint('/api/node/text'),async req=>{const s=session(req,true),p=z.object({target:targetSchema}).strict().parse(req.body);pages.activity(s.owner);return device.readText(s.owner,p.target);});
 const clickOptionsSchema=z.object({jitter:z.boolean().optional()}).strict();
 const requestCache=new Map<string,{hash:string;work:Promise<unknown>;time:number}>();
 async function once(req:any,fn:()=>Promise<unknown>){const s=session(req,true),id=z.string().uuid().parse(req.body.requestId);const key=s.owner+':'+id,hash=JSON.stringify(req.body);const old=requestCache.get(key);if(old){if(old.hash!==hash)throw new ConsoleError('REQUEST_CONFLICT','requestId reused for different action',409);return old.work;}pages.activity(s.owner);const work=fn();requestCache.set(key,{hash,work,time:Date.now()});if(requestCache.size>2000){for(const [k,v]of requestCache)if(v.time<Date.now()-300000)requestCache.delete(k);}return work;}
 app.post(endpoint('/api/node'),async req=>{const s=session(req,true);const p=z.object({requestId:z.string().uuid(),target:targetSchema,action:z.enum(['click','longPress','focus','setText','setChecked']),value:z.union([z.string().max(32768),z.boolean(),z.number()]).optional(),clickOptions:clickOptionsSchema.optional()}).parse(req.body);return once(req,()=>device.nodeAction(s.owner,p.target,p.action,p.value,undefined,p.clickOptions));});
-app.post(endpoint('/api/press'),async req=>{const s=session(req,true);const p=z.object({requestId:z.string().uuid(),key:z.string(),meta:z.number().int().min(0).max(200000).default(0),binding:z.object({target:targetSchema,focusEpoch:z.number().int()}).optional()}).parse(req.body);const code=keyCodes[p.key];if(code===undefined)throw new ConsoleError('INVALID_KEY','不支持的按键名');return once(req,()=>device.press(s.owner,code,p.meta,undefined,p.binding));});
+app.post(endpoint('/api/press'),async req=>{const s=session(req,true);const p=z.object({requestId:z.string().uuid(),key:z.string(),meta:z.number().int().min(0).max(200000).default(0)}).parse(req.body);const code=keyCodes[p.key];if(code===undefined)throw new ConsoleError('INVALID_KEY','不支持的按键名');return once(req,()=>device.press(s.owner,code,p.meta));});
 app.post(endpoint('/api/gesture'),async req=>{const s=session(req,true);const p=z.object({requestId:z.string().uuid(),kind:z.enum(['tap','longPress','doubleTap','swipe','drag','pinch']),x:z.number().optional(),y:z.number().optional(),x1:z.number().optional(),y1:z.number().optional(),x2:z.number().optional(),y2:z.number().optional(),durationMs:z.number().min(100).max(5000).optional(),startDistance:z.number().min(1).max(2000).optional(),endDistance:z.number().min(1).max(2000).optional()}).parse(req.body);return once(req,()=>device.gesture(s.owner,p.kind,p,undefined,s.connection.abort.signal));});
 app.post(endpoint('/api/wake'),async req=>{const s=session(req,true);z.object({requestId:z.string().uuid()}).parse(req.body);return once(req,()=>device.wake(s.owner));});
 app.post(endpoint('/api/release'),async req=>{const s=session(req,true);await device.release(s.owner);return {ok:true};});
@@ -117,11 +116,10 @@ app.get(endpoint('/ws/events'),{websocket:true},(ws,req)=>{
     pages.attach(s.connection,ws);
     const observation=(state:unknown)=>{if(ws.readyState===1){if(ws.bufferedAmount>1_000_000){ws.close(1013);return;}ws.send(JSON.stringify({type:'observation',state,ownsControl:device.owner===s.owner,controlAllowed:device.canClaim(s.owner),taskBusy:!!device.activeTask}));}};
     const task=(t:any)=>{if(ws.readyState===1)ws.send(JSON.stringify({type:'task',task:publicTask(t,s.owner)}));};
-    const focus=(data:unknown)=>{if(ws.readyState===1)ws.send(JSON.stringify({type:'focus',...data as object}));};
     ws.on('message',()=>{try{pages.heartbeat(s.owner);}catch{ws.close(4001,'PAGE_REPLACED');}});
     ws.send(JSON.stringify({type:'tasks',tasks:tasks.latest().map(t=>publicTask(t,s.owner))}));
     const power=(data:unknown)=>{if(ws.readyState===1)ws.send(JSON.stringify({type:'power',...data as object}));};device.on('power',power);
-    observation(device.state);device.on('observation',observation);device.on('focus',focus);tasks.on('task',task);ws.once('close',()=>{device.off('observation',observation);device.off('focus',focus);device.off('power',power);tasks.off('task',task);disconnect(s.connection,'CONNECTION_CLOSED');});
+    observation(device.state);device.on('observation',observation);tasks.on('task',task);ws.once('close',()=>{device.off('observation',observation);device.off('power',power);tasks.off('task',task);disconnect(s.connection,'CONNECTION_CLOSED');});
   }catch{ws.close(1008,'Authentication required');}
 });
 installWssVideoRoute(app,endpoint,{session,originAllowed,pages,rtc,video:device.video,serialize:serialized,parallel:rtc});

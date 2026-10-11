@@ -1,18 +1,20 @@
 import {confirmAction} from './confirmation.js';
 import { AndroidKeyCode } from '@yume-chan/scrcpy';
 import { label, nodeValue, shortId, shownNodes } from './presentation.js';
-import type { AndroidNode, Observation, Target, TextBinding } from './types.js';
+import type { AndroidNode, Observation, Target } from './types.js';
 import { installApplications } from './applications-client.js';
 import { normalizeBasePath,consolePath } from './paths.js';
 import type {TurnProvider} from './turn-fallback.js';
 import {createVideoManager} from './video-manager.js';
 import type {VideoMode} from './video-race.js';
 import {videoFreshness} from './video-freshness.js';
+import {currentDraftTarget,focusedTextNode,writableTextNode,type DraftTarget} from './text-draft.js';
 type VideoProvider=TurnProvider|'wss';
 const basePath=normalizeBasePath(document.documentElement.dataset.consoleBase),endpoint=(path:string)=>consolePath(basePath,path);
 
 const login=document.getElementById('login-form') as HTMLFormElement|null;
 if(login){
+  const reason=sessionStorage.getItem('android-console-login-reason');if(reason){const note=document.createElement('p');note.className='login-note';note.setAttribute('role','status');note.textContent=reason;login.before(note);}
   // A Strict cookie may be withheld on a cross-site navigation but is available here.
   void fetch(endpoint('/api/auth/status')).then(r=>r.json()).then(s=>{if(s.authenticated)location.reload();}).catch(()=>{});
   login.addEventListener('submit',async e=>{e.preventDefault();const values=new FormData(login),button=login.querySelector<HTMLButtonElement>('button')!,status=login.querySelector('output')!;button.disabled=true;status.textContent='正在验证…';try{const response=await fetch(endpoint('/api/login'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:values.get('password'),remember:values.get('remember')==='on',loginToken:values.get('loginToken')})});const result=await response.json();if(response.ok)location.reload();else status.textContent=result.error?.message||'登录失败';}catch{status.textContent='连接失败，请稍后重试';}finally{button.disabled=false;}});
@@ -28,7 +30,7 @@ async function initialize() {
   q('.routing').append(q('.phone-caption'),q('.video-modes'));
   const keyboardDetails=document.createElement('details');keyboardDetails.className='advanced-input';
   const summary=document.createElement('summary');summary.textContent='原始键盘与更多手势';keyboardDetails.append(summary);
-  const keyboardPane=q('.keyboard-command');keyboardDetails.append(keyboardPane,q('.gesture-command'));q('.commands').style.position='relative';q('.commands').append(keyboardDetails);
+  const keyboardPane=q('.keyboard-command');keyboardDetails.append(q('.capture-buttons'),keyboardPane,q('.clipboard-command'),q('.gesture-command'));q('.commands').style.position='relative';q('.commands').append(keyboardDetails);
   const process=q('[aria-label="检测到进程"]'),processDetails=document.createElement('details');processDetails.className='process-diagnostics';
   const processSummary=document.createElement('summary');processSummary.textContent='进程诊断（按需展开）';processDetails.append(processSummary,process);q('.applications-panel').append(processDetails);
   const closeZoom=document.createElement('button');closeZoom.className='close-enlarge';closeZoom.textContent='退出放大';closeZoom.addEventListener('click',()=>{phonePane.classList.remove('enlarged');fitPhone();});phonePane.append(closeZoom);
@@ -38,21 +40,22 @@ async function initialize() {
   let applications:ReturnType<typeof installApplications>|undefined;
   let online=false,connecting=false,connectionId='',connectionEpoch=0,networkAbort=new AbortController(),needsRefresh=false,waking=false,eventsSocket:WebSocket|null=null;
   let inspected:{node:AndroidNode;snapshotId:string}|null=null;
-  let binding:TextBinding|null=null,auto=true,dirty=false,pending=0,revision=0,resend=false,baseText='',textNotice='',debounce:ReturnType<typeof setTimeout>|undefined,composing=false;
+  let draftTarget:DraftTarget|null=null,dirty=false,textPending=false,textNotice='';
   let currentTask:any=boot.tasks[0]||null,keyMode='letters',mode='click',control:WebSocket|null=null;
   let meta={width:0,height:0,codec:0};
   let networkInfo:unknown=null,networkLoading=false;
   let videoProvider:VideoProvider|undefined;
   const providerName=(provider:VideoProvider|undefined)=>provider==='coturn'?'自建 TURN':provider==='cloudflare'?'Cloudflare TURN':provider==='wss'?'WSS':'直连 WebRTC';
-  const videoPaused=()=>!observation.powerCollectedAt||!observation.screenOn||observation.locked!==false;
-  const videoPauseReason=()=>!observation.powerCollectedAt?'power_unknown':!observation.screenOn?'screen_off':observation.locked!==false?'locked':null;
+  const powerKnown=()=>!observation.powerError&&!!observation.powerCollectedAt&&Date.now()-observation.powerCollectedAt<=10000;
+  const videoPaused=()=>!powerKnown()||!observation.screenOn||observation.locked!==false;
+  const videoPauseReason=()=>!powerKnown()?'power_unknown':!observation.screenOn?'screen_off':observation.locked!==false?'locked':null;
   let videoManager:ReturnType<typeof createVideoManager>|null=null;
   let lastDisplayedFrameAt:number|null=null,frameRequiredAfter=0,previousVideoPaused=true;
   const savedMode=localStorage.getItem('android-video-mode');
   const videoProviders:VideoProvider[]=boot.webrtc?.availableProviders||['none'];
   let videoMode:VideoMode=savedMode&&(savedMode==='auto'||videoProviders.includes(savedMode as VideoProvider))?savedMode as VideoMode:'auto';
   const canvas=q<HTMLVideoElement>('.video-canvas'),phone=q<HTMLButtonElement>('.phone'),editor=q<HTMLTextAreaElement>('.code-input'),text=q<HTMLTextAreaElement>('.text-input');
-  const proxy=q<HTMLTextAreaElement>('.screen-proxy');let bindingBusy=false,lastBindAttempt=0;
+  const textTargetSelect=q<HTMLSelectElement>('.text-target');
   const jitterToggle=q<HTMLInputElement>('.click-jitter');jitterToggle.checked=localStorage.getItem('android-click-jitter')!=='false';
   const clickOptions=()=>({jitter:jitterToggle.checked});
   jitterToggle.addEventListener('change',()=>localStorage.setItem('android-click-jitter',String(jitterToggle.checked)));
@@ -63,47 +66,44 @@ async function initialize() {
   const target=(n:AndroidNode):Target=>({id:n.id,fingerprint:n.fingerprint,snapshotId:observation.snapshotId});
   const url=(path:string)=>{const u=new URL(endpoint(path),location.href);u.searchParams.set('page',boot.pageId);u.searchParams.set('connection',connectionId);return u.toString().replace(/^http/,'ws');};
   const viewUrl=(path:string)=>{const u=new URL(endpoint(path),location.href);u.searchParams.set('page',boot.pageId);u.searchParams.set('connection',connectionId);return u.pathname+u.search;};
-  const interactive=()=>online&&!waking&&observation.screenOn&&observation.locked===false&&!!observation.powerCollectedAt;
+  const interactive=()=>online&&!waking&&powerKnown()&&observation.screenOn&&observation.locked===false;
   function fit(){app.style.transform='none';root.style.width='100%';root.style.height=innerHeight+'px';fitPhone();}
   addEventListener('resize',fit);
   function fitPhone(){const stage=q<HTMLElement>('.phone-stage');const ratio=meta.width&&meta.height?meta.width/meta.height:observation.width/observation.height;
     if(!Number.isFinite(ratio)||ratio<=0)return;
     app.style.setProperty('--phone-column',Math.min(innerWidth*.46,(innerHeight-52)*ratio+16)+'px');
-    const height=Math.min(stage.clientHeight-6,(stage.clientWidth-6)/ratio)*(phonePane.classList.contains('enlarged')?1.35:1);phone.style.height=height+'px';phone.style.width=height*ratio+'px';positionProxy();}
-  function positionProxy(){const n=observation.focus,visible=bindValid()&&!!n&&!waking;proxy.hidden=!visible||!!meta.width&&Math.abs(meta.width/meta.height-observation.width/observation.height)>.04;
-    if(!visible||!n)return;const stage=q('.phone-stage').getBoundingClientRect(),rect=phone.getBoundingClientRect(),[l,t,r,b]=n.bounds;
-    proxy.style.left=rect.left-stage.left+l/observation.width*rect.width+'px';proxy.style.top=rect.top-stage.top+t/observation.height*rect.height+'px';
-    proxy.style.width=(r-l)/observation.width*rect.width+'px';proxy.style.height=Math.max(28,(b-t)/observation.height*rect.height)+'px';proxy.setAttribute('aria-label','手机输入框：'+label(n,observation.nodes));
-  }
-  function mirror(value:string){if(text.value!==value)text.value=value;if(proxy.value!==value)proxy.value=value;}
-  async function detectTarget(force=false){if(!online||!interactive()||bindingBusy||pending)return;if(bindValid()&&!force)return;
-    if(dirty&&!force){auto=false;textState('目标改变，未发送草稿保留；重新检测前请核对目标');return;}
-    if(!force&&(!observation.focus||Date.now()-lastBindAttempt<3000))return;
-    const epoch=connectionEpoch,focus=observation.focus?.id;bindingBusy=true;lastBindAttempt=Date.now();
-    try{const result=await api('/api/binding',{});if(!online||epoch!==connectionEpoch||result.binding.target.id!==observation.focus?.id||focus!==observation.focus?.id)return;
-      binding=result.binding;baseText=result.text;if(!dirty){mirror(result.text);textNotice='目标已确认，可直接填写';}textState();positionProxy();if(document.activeElement===phone&&!pointer)proxy.focus({preventScroll:true});}
-    catch(error){textNotice=String(error);textState();}finally{bindingBusy=false;}
-  }
+    const height=Math.min(stage.clientHeight-6,(stage.clientWidth-6)/ratio)*(phonePane.classList.contains('enlarged')?1.35:1);phone.style.height=height+'px';phone.style.width=height*ratio+'px';}
   fit();
   new ResizeObserver(fitPhone).observe(q('.phone-stage'));
   async function api(path:string,data?:unknown){if(!online)throw new Error('PAGE_OFFLINE: 本页已离线');const epoch=connectionEpoch;
     const response=await fetch(endpoint(path),{method:data===undefined?'GET':'POST',headers:{'X-Console-Page':boot.pageId,'X-Console-Connection':connectionId,...(data===undefined?{}:{'Content-Type':'application/json','X-Console-CSRF':boot.csrf})},body:data===undefined?undefined:JSON.stringify(data),signal:networkAbort.signal});
     const result=await response.json();if(!online||epoch!==connectionEpoch)throw new Error('PAGE_OFFLINE: 连接已更换');
-    if(!response.ok){if(result.error?.code==='PAGE_OFFLINE')goOffline('另一页面已连接，本页已离线');throw new Error(result.error?.code+': '+result.error?.message);}return result;
+    if(!response.ok){if(result.error?.code==='PAGE_OFFLINE')goOffline('本页连接已失效，请重新连接');else if(result.error?.code==='LOGIN_REQUIRED')goOffline(offlineReason('LOGIN_REQUIRED'));throw new Error(result.error?.code+': '+result.error?.message);}return result;
   }
   function log(message:string){if(!online)return;const row=document.createElement('div');row.className='log-line';const prefix=document.createElement('span');prefix.className='log-time';prefix.textContent=new Date().toLocaleTimeString();const content=document.createElement('span');content.className='log-message';content.textContent=message;row.append(prefix,content);q('.results').prepend(row);q('.results').scrollTop=0;while(q('.results').children.length>100)q('.results').lastChild?.remove();}
-  async function perform(path:string,data:any){if(path!=='/api/wake'&&(pending||(auto&&dirty))){await sendText();if(pending||dirty)throw Error('文字尚未写入确认，动作未发送');}try{const result=await api(path,{requestId:crypto.randomUUID(),...(path==='/api/node'?{clickOptions:clickOptions()}:{}),...data});const names:Record<string,string>={'/api/node':data.action==='setText'?'填写文字':data.action==='focus'?'聚焦输入框':data.action==='click'?'点击':'节点动作','/api/press':'手机按键','/api/gesture':data.kind||'手势','/api/wake':'唤醒并解锁','/api/panel':data.kind==='notifications'?'展开通知栏':'展开控制中心','/api/apps/open':'打开应用','/api/android-tasks/switch':'切换任务','/api/navigation/back':'连续返回'};log((names[path]||path)+' · '+(data.key||data.packageName||data.target?.id||data.taskId||'')+' · '+(result.verification==='verified'?'效果已验证':result.verification==='failed'?'验证失败':result.verification==='inconclusive'?'无法确认效果':'已发送，未验证'));const detail=document.createElement('details'),title=document.createElement('summary'),pre=document.createElement('pre');title.textContent='技术详情';pre.textContent=JSON.stringify(result,null,2);detail.append(title,pre);q('.results').firstChild?.appendChild(detail);return result;}catch(error){log(String(error));throw error;}}
-  applications=installApplications(root,{api,perform,canAct:()=>interactive()&&controlAllowed&&!appsBusy&&!pending&&!(auto&&dirty),online:()=>online,busyChanged:busy=>{appsBusy=busy;textState();details();if(!busy&&auto&&dirty&&bindValid())void sendText();}});
-  function focusExplanation(reason:string|null|undefined){return ({WINDOW_CHANGED:'手机窗口已改变，等待重新检测',AMBIGUOUS_FOCUS:'多个输入目标，不能自动选择',NO_EDITABLE_FOCUS:'未发现可编辑焦点，请先选中手机输入框',PASSWORD_FIELD:'密码字段不支持镜像输入',FOCUS_CHANGED:'手机焦点已改变',TEXT_READ_UNSUPPORTED:'控件不支持文字回读'})[reason||'NO_EDITABLE_FOCUS']||'正在确认文字目标';}
-  function bindValid(){return interactive()&&!!binding&&observation.focus?.id===binding.target.id&&observation.focusEpoch===binding.focusEpoch&&!observation.uiError;}
-  function textState(message?:string){const valid=bindValid();q<HTMLInputElement>('.sync-toggle').disabled=!valid||(!controlAllowed||appsBusy);q<HTMLInputElement>('.sync-toggle').checked=auto;q<HTMLButtonElement>('.text-submit').disabled=!valid||auto||(!controlAllowed||appsBusy)||!!pending;q<HTMLButtonElement>('.rebind').disabled=!interactive()||taskBusy||appsBusy||!!pending;
-    assign(q('.binding-target'),valid?'目标：'+label(observation.focus!,observation.nodes):binding?'目标已变化 · 草稿保留':'等待手机文字目标');
-    if(message)textNotice=message;assign(q('.sync-status'),!online?'本页已离线，草稿已保留':!observation.screenOn?'点击手机画面或下方按钮唤醒并解锁':observation.locked!==false?'手机已锁屏，解锁后才能输入':!valid?(textNotice||focusExplanation(observation.focusReason)):appsBusy?'导航操作中，草稿保留':!controlAllowed?'暂不可写：脚本或其他会话控制设备':pending?'正在等待手机写入确认':textNotice||(auto?'直接编辑：网页修改写入手机，手机修改安全回读':'草稿模式：核对目标后提交'));positionProxy();inputAvailability();
+  async function perform(path:string,data:any){try{const result=await api(path,{requestId:crypto.randomUUID(),...(path==='/api/node'?{clickOptions:clickOptions()}:{}),...data});const names:Record<string,string>={'/api/node':data.action==='setText'?'填写文字':data.action==='focus'?'聚焦输入框':data.action==='click'?'点击':'节点动作','/api/press':'手机按键','/api/gesture':data.kind||'手势','/api/wake':'唤醒并解锁','/api/panel':data.kind==='notifications'?'展开通知栏':'展开控制中心','/api/apps/open':'打开应用','/api/android-tasks/switch':'切换任务','/api/navigation/back':'连续返回'};log((names[path]||path)+' · '+(data.key||data.packageName||data.target?.id||data.taskId||'')+' · '+(result.verification==='verified'?'效果已验证':result.verification==='failed'?'验证失败':result.verification==='inconclusive'?'无法确认效果':'已发送，未验证'));const detail=document.createElement('details'),title=document.createElement('summary'),pre=document.createElement('pre');title.textContent='技术详情';pre.textContent=JSON.stringify(result,null,2);detail.append(title,pre);q('.results').firstChild?.appendChild(detail);return result;}catch(error){log(String(error));throw error;}}
+  applications=installApplications(root,{api,perform,canAct:()=>interactive()&&controlAllowed&&!appsBusy,online:()=>online,busyChanged:busy=>{appsBusy=busy;textState();details();}});
+  function chooseTextTarget(node:AndroidNode|null,source:DraftTarget['source']='selected'){
+    draftTarget=node?{node:structuredClone(node),windowId:observation.windowId,source}:null;textNotice='';textState();
   }
-  function inputAvailability(){phone.disabled=!online||(interactive()&&(!!pending||(auto&&dirty)))||taskBusy||appsBusy;proxy.readOnly=taskBusy||appsBusy||!controlAllowed;text.readOnly=taskBusy||appsBusy||!controlAllowed||(auto&&!bindValid());const blocked=!interactive()||(!controlAllowed||appsBusy)||!observation.controlAvailable||!!pending||(auto&&dirty);q('.keys')?.querySelectorAll<HTMLButtonElement>('button').forEach(b=>b.disabled=blocked);qa('[data-press],[data-gesture],[data-mode],[data-panel]').forEach(b=>(b as HTMLButtonElement).disabled=blocked);q<HTMLButtonElement>('.run').disabled=taskBusy||!!pending||(auto&&dirty);q<HTMLButtonElement>('.check-code').disabled=taskBusy||!!pending||(auto&&dirty);details();route();}
-  function route(){const active=document.activeElement,ready=interactive()&&!!control&&control.readyState===1&&observation.controlAvailable&&controlAllowed&&!appsBusy&&!pending&&!(auto&&dirty), captured=active===phone&&ready,writing=bindValid()&&auto&&(active===proxy||active===text);
-    const focus=active===proxy?'手机文字输入':active===phone?'手机画面':active===text?'文本输入框':active===editor?'JS 编辑框':active===q('.node-search')?'元素搜索框':'网页';
-    q('.routing').classList.toggle('captured',captured);assign(q('.focus-target'),focus);assign(q('.key-target'),writing?'手机文字':captured?'手机按键':'网页');assign(q('.keyboard-backend'),observation.keyboardBackend==='uhid'?'原始键盘：UHID':'原始键盘：兼容按键；推荐文字直达');assign(q('.capture-status'),!online?'已离线':writing?'文字直达手机 · 写入后验证':captured?'键盘输入手机 · Esc 退出':active===phone?'手机暂不可输入':'键盘留在网页');
+  function textState(message?:string){
+    if(message!==undefined)textNotice=message;
+    if(!dirty&&!textPending&&(!draftTarget||draftTarget.source==='focus')){const node=focusedTextNode(observation);draftTarget=node?{node:structuredClone(node),windowId:observation.windowId,source:'focus'}:null;}
+    const fields=observation.nodes.filter(writableTextNode),ids=new Set(fields.map(n=>n.id));
+    for(const option of [...textTargetSelect.options])if(option.value&&!ids.has(option.value)&&option.value!==draftTarget?.node.id)option.remove();
+    for(const node of fields){let option=[...textTargetSelect.options].find(o=>o.value===node.id);if(!option){option=document.createElement('option');option.value=node.id;textTargetSelect.append(option);}assign(option,label(node,observation.nodes)+' · '+(node.resourceId||node.className));option.disabled=false;}
+    if(draftTarget&&!ids.has(draftTarget.node.id)){let option=[...textTargetSelect.options].find(o=>o.value===draftTarget!.node.id);if(!option){option=document.createElement('option');option.value=draftTarget.node.id;textTargetSelect.append(option);}assign(option,'原目标已不可用');option.disabled=true;}
+    textTargetSelect.value=currentDraftTarget(observation,draftTarget)?draftTarget!.node.id:'';textTargetSelect.disabled=!online||textPending||taskBusy;
+    const node=currentDraftTarget(observation,draftTarget),ready=interactive()&&!!node&&controlAllowed&&!appsBusy&&!textPending&&!taskBusy;
+    q<HTMLButtonElement>('.text-submit').disabled=!ready;q<HTMLButtonElement>('.text-read').disabled=!ready;
+    assign(q('.text-target-status'),draftTarget?'填写到：'+label(draftTarget.node,observation.nodes):'请选择手机输入字段');
+    assign(q('.text-status'),!online?'本页已离线，草稿保留':!interactive()?'手机状态不可操作，草稿保留':textPending?'正在处理文字请求；不会自动重试':!node&&draftTarget?(textNotice&&!textNotice.startsWith('草稿')?textNotice+'；目标已改变，请重新选择':'目标已改变，请重新选择；草稿保留'):textNotice||(!node?'请选择输入字段；仅有一个手机文字焦点时会自动选中':'网页内容仅为草稿，点击“填写到手机”才会替换原文'));
+    inputAvailability();
+  }
+  function inputAvailability(){phone.disabled=!online||taskBusy||appsBusy;text.readOnly=textPending;q<HTMLButtonElement>('.video-reconnect').disabled=!online;const blocked=!interactive()||(!controlAllowed||appsBusy)||!observation.controlAvailable;q('.keys')?.querySelectorAll<HTMLButtonElement>('button').forEach(b=>b.disabled=blocked);qa('[data-press],[data-gesture],[data-mode],[data-panel]').forEach(b=>(b as HTMLButtonElement).disabled=blocked);q<HTMLButtonElement>('.run').disabled=taskBusy;q<HTMLButtonElement>('.check-code').disabled=taskBusy;details();route();}
+  function route(){const active=document.activeElement,ready=interactive()&&!!control&&control.readyState===1&&observation.controlAvailable&&controlAllowed&&!appsBusy, captured=active===phone&&ready;
+    const focus=active===phone?'手机画面':active===text?'文本输入框':active===editor?'JS 编辑框':active===q('.node-search')?'元素搜索框':'网页';
+    q('.routing').classList.toggle('captured',captured);assign(q('.focus-target'),focus);assign(q('.key-target'),captured?'手机按键':'网页');assign(q('.keyboard-backend'),observation.keyboardBackend==='uhid'?'原始键盘：UHID':'原始键盘：兼容按键；推荐文字直达');assign(q('.capture-status'),!online?'已离线':captured?'键盘输入手机 · Esc 退出':active===phone?'手机暂不可输入':'键盘留在网页');
     q<HTMLButtonElement>('.capture').disabled=!ready;q<HTMLButtonElement>('.release').disabled=!online;assign(q('.owner-state'),online&&taskBusy?'批量操作执行中':'');
     applications?.controlsChanged();
   }
@@ -121,49 +121,44 @@ async function initialize() {
     assign(q('.snapshot-version'),source.snapshotId||'等待元素数据');
     assign(q('.ui-status'),observation.uiError?'元素暂不可用；保留上次观察':'元素自动更新');qa('[data-filter]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.filter===filter)));details();
   }
-  function inspect(id:string){const source=observation,n=source.nodes.find(n=>n.id===id);if(!n)return;inspected={node:structuredClone(n),snapshotId:source.snapshotId};rows.forEach((row,key)=>row.button.classList.toggle('is-inspected',key===id));details();}
-  function details(){if(inspected){const latest=observation.nodes.find(n=>n.id===inspected!.node.id);if(latest&&(latest.resourceId?latest.resourceId===inspected.node.resourceId&&latest.package===inspected.node.package:latest.className===inspected.node.className)&&JSON.stringify(latest.bounds)===JSON.stringify(inspected.node.bounds)&&(latest.editable||latest.text===inspected.node.text)){inspected={node:structuredClone(latest),snapshotId:observation.snapshotId};}}const n=inspected?.node,current=observation.nodes.find(x=>x.id===n?.id),valid=!!n&&!!current&&n.fingerprint===current.fingerprint&&!observation.uiError&&interactive()&&controlAllowed&&!appsBusy&&observation.controlAvailable&&!pending&&!(auto&&dirty);
+  function inspect(id:string){const source=observation,n=source.nodes.find(n=>n.id===id);if(!n)return;if(writableTextNode(n)&&!textPending)chooseTextTarget(n);inspected={node:structuredClone(n),snapshotId:source.snapshotId};rows.forEach((row,key)=>row.button.classList.toggle('is-inspected',key===id));details();}
+  function details(){if(inspected){const latest=observation.nodes.find(n=>n.id===inspected!.node.id);if(latest&&(latest.resourceId?latest.resourceId===inspected.node.resourceId&&latest.package===inspected.node.package:latest.className===inspected.node.className)&&JSON.stringify(latest.bounds)===JSON.stringify(inspected.node.bounds)&&(latest.editable||latest.text===inspected.node.text)){inspected={node:structuredClone(latest),snapshotId:observation.snapshotId};}}const n=inspected?.node,current=observation.nodes.find(x=>x.id===n?.id),valid=!!n&&!!current&&n.fingerprint===current.fingerprint&&!observation.uiError&&interactive()&&controlAllowed&&!appsBusy&&observation.controlAvailable;
     if(!current||current.fingerprint!==n?.fingerprint)q<HTMLElement>('.highlight-box').hidden=true;
     assign(q('.detail-name'),n?shortId(n,observation.nodes)+' · '+label(n,observation.nodes)+' · '+n.className.split('.').pop()+(valid?'':' · 操作暂停'):'请选择节点查看属性');
     assign(q('.detail-properties'),n?`${n.resourceId||n.description||n.className} · parent=${n.parentId||'root'}\nbounds=${JSON.stringify(n.bounds)} · clickable=${n.clickable} · editable=${n.editable} · checked=${n.checked}`:'');
     q<HTMLButtonElement>('.inspect-click').disabled=!valid||!n?.clickable;q<HTMLButtonElement>('.inspect-hold').disabled=!valid||!n?.longClickable;q<HTMLButtonElement>('.inspect-focus').disabled=!valid||!n?.editable;
     q<HTMLButtonElement>('.inspect-toggle').disabled=!valid||!n?.checkable||!n.clickable;assign(q('.inspect-toggle'),n?.checkable?(n.checked?'设为关闭':'设为开启'):'设置开关');q<HTMLButtonElement>('.locate').disabled=!n;q<HTMLButtonElement>('.properties').disabled=!n;
   }
-  function update(state:Observation){if(!online)return;observation=state;if(binding&&(state.focus?.id!==binding.target.id||state.focusEpoch!==binding.focusEpoch)){binding=null;textNotice=dirty?'目标改变，未发送草稿已保留':focusExplanation(state.focusReason);}assign(q('.device-model'),state.model||'Android');assign(q('.device-system'),state.system||state.android);assign(q('.phone-summary'),(state.keepAwake?'连接保持亮屏':'保持亮屏未确认')+' · 5分钟无操作断连'+(state.summary?' · 电量 '+(state.summary.battery??'未知')+'%'+(state.summary.charging?' 充电':'')+' · 网络 '+(state.summary.network||'未知'):'')+(state.keepAwakeError?' · '+state.keepAwakeError:''));assign(q('.connection-state'),state.connected?'ADB 已连接':state.uiError&&state.controlAvailable?'UI 暂不可用':state.uiError?'连接异常':'未连接');assign(q('.foreground'),state.foregroundApp||'未知');assign(q('.android-focus'),state.focus?label(state.focus,state.nodes):'无可读输入框');assign(q('.display-size'),`${state.width} × ${state.height}`);
-    assign(q('.transport-status'),state.videoError||state.uiError||(state.locked?'设备锁屏，请手动解锁':state.screenOn?'设备已亮屏':'设备息屏'));if(bindValid()&&auto&&!dirty&&!pending&&!composing){mirror(state.focus?.text||'');baseText=text.value;}
-    renderNodes();renderPhone();textState();route();fitPhone();void detectTarget();
+  function update(state:Observation){if(!online)return;observation=state;assign(q('.device-model'),state.model||'Android');assign(q('.device-system'),state.system||state.android);assign(q('.phone-summary'),(state.keepAwake?'已设置保持亮屏':'保持亮屏未确认')+' · 5分钟无操作断连'+(state.summary?' · 电量 '+(state.summary.battery??'未知')+'%'+(state.summary.charging?' 充电':'')+' · 网络 '+(state.summary.network||'未知'):'')+(state.keepAwakeError?' · '+state.keepAwakeError:''));assign(q('.connection-state'),state.connected?'ADB 已连接':state.uiError&&state.controlAvailable?'UI 暂不可用':state.uiError?'连接异常':'未连接');assign(q('.foreground'),state.foregroundApp||'未知');assign(q('.android-focus'),state.focus?label(state.focus,state.nodes):'无可读输入框');assign(q('.display-size'),`${state.width} × ${state.height}`);
+    assign(q('.transport-status'),state.videoError||state.uiError||(state.locked?'设备锁屏，请手动解锁':state.screenOn?'设备已亮屏':'设备息屏'));
+    renderNodes();renderPhone();textState();route();fitPhone();
   }
-  async function sendText(){clearTimeout(debounce);if(appsBusy){textState('导航操作中，草稿等待同步');return;}if(pending){resend=true;return;}const value=text.value,version=revision,current=binding;if(!current||!bindValid()){textState('目标失效，草稿保留，未发送');return;}pending=1;resend=false;textState();
-    try{const result=await api('/api/text',{binding:current,text:value,expectedText:baseText});if(binding!==current||observation.focus?.id!==current.target.id||observation.focusEpoch!==current.focusEpoch)return;baseText=result.text;if(version===revision){dirty=false;mirror(result.text);}textNotice=dirty?'新的草稿尚未发送':'文字写入已确认';}
-    catch(error){auto=false;resend=false;textNotice=String(error)+'；草稿保留';log(String(error));}
-    finally{pending=0;const again=auto&&dirty&&resend&&bindValid();resend=false;textState();if(again)void sendText();}
+  async function writeDraft(){
+    const node=currentDraftTarget(observation,draftTarget);if(!node||!interactive()||textPending||!controlAllowed||taskBusy||appsBusy){textState('目标不可用，未发送；草稿保留');return;}
+    const destination=label(node,observation.nodes),value=text.value;textPending=true;textState();
+    try{const result=await perform('/api/node',{target:target(node),action:'setText',value});
+      textNotice=result.verification==='verified'?'已填写到 '+destination+'，原文已替换并验证':result.verification==='failed'?'已发送，但手机文字与草稿不同；请检查手机，不会自动重试':'已发送，结果未确认；请观察手机，不会自动重试';
+    }catch(error){textNotice=String(error)+'；草稿保留，不会自动重试';}finally{textPending=false;textState();}
   }
-  const edited=(source:HTMLTextAreaElement)=>{if(source===proxy)text.value=proxy.value;else proxy.value=text.value;revision++;dirty=true;if(auto&&!composing){clearTimeout(debounce);debounce=setTimeout(sendText,180);textState('新文字等待同步');}else textState('网页草稿未发送');};for(const source of [text,proxy]){source.addEventListener('input',()=>edited(source));source.addEventListener('compositionstart',()=>composing=true);source.addEventListener('compositionend',()=>{composing=false;if(auto){clearTimeout(debounce);debounce=setTimeout(sendText,180);}});}
-  let submittingText=false;
-  proxy.addEventListener('keydown',async event=>{
-    if(!['Enter','Tab'].includes(event.key)||event.key==='Enter'&&event.shiftKey||event.isComposing)return;
-    event.preventDefault();if(submittingText||!binding)return;submittingText=true;const current=binding;
-    try{const deadline=Date.now()+20000;while(pending&&online&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,25));
-      if(!online||pending)throw Error('文字仍未确认，提交按键未发送');if(dirty)await sendText();
-      if(dirty||pending||binding!==current||!bindValid())throw Error('目标或文字未确认，提交按键未发送');
-      await perform('/api/press',{key:event.key==='Enter'?'ENTER':'TAB',meta:event.shiftKey?1:0,binding:current});
-    }catch(error){log(String(error));}finally{submittingText=false;}
+  text.addEventListener('input',()=>{dirty=true;textState('草稿未发送；不会自动写入手机');});
+  textTargetSelect.addEventListener('change',()=>chooseTextTarget(observation.nodes.find(n=>n.id===textTargetSelect.value)||null));
+  q('.text-submit').addEventListener('click',()=>void writeDraft());
+  q('.text-read').addEventListener('click',async()=>{
+    if(textPending)return;if(dirty&&!await confirmAction('使用手机内容替换网页草稿？这不会修改手机。'))return;
+    const node=currentDraftTarget(observation,draftTarget);if(!node||!interactive())return;const requestTarget=draftTarget;
+    textPending=true;textState();try{const result=await api('/api/node/text',{target:target(node)});if(draftTarget!==requestTarget||!currentDraftTarget(observation,requestTarget))throw Error('目标已改变，未覆盖草稿');text.value=result.text;dirty=true;textNotice='已读取为网页草稿，未写入手机';}
+    catch(error){textNotice=String(error)+'；草稿保留';}finally{textPending=false;textState();}
   });
-  text.addEventListener('compositionstart',()=>composing=true);text.addEventListener('compositionend',()=>{composing=false;if(auto){clearTimeout(debounce);debounce=setTimeout(sendText,180);}});
-  q<HTMLInputElement>('.sync-toggle').addEventListener('change',e=>{auto=(e.target as HTMLInputElement).checked;textNotice='';if(auto&&dirty)void sendText();textState();});q('.text-submit').addEventListener('click',()=>void sendText());
-  q('.rebind').addEventListener('click',async()=>{if(dirty&&!await confirmAction('保留草稿并改用当前手机输入目标？草稿不会自动发送。'))return;binding=null;void detectTarget(true);});
-  q('.text-read').addEventListener('click',async()=>{if(dirty&&!await confirmAction('使用手机文字覆盖未发送草稿？'))return;dirty=false;binding=null;await detectTarget(true);});
-  q('.text-to-selected').addEventListener('click',async()=>{if(!inspected)return;try{await perform('/api/node',{target:target(inspected.node),action:'setText',value:text.value});dirty=false;await detectTarget(true);}catch{}});
-  q('.clipboard-read').addEventListener('click',async()=>{if(dirty&&!await confirmAction('读取剪贴板将覆盖网页草稿，确认？'))return;try{const value=await api('/api/clipboard',{write:false});mirror(value.text);revision++;dirty=true;auto=false;textState('手机剪贴板已读为草稿，尚未写入输入框');}catch(error){log(String(error));}});
+  q('.clipboard-read').addEventListener('click',async()=>{if(dirty&&!await confirmAction('读取剪贴板将覆盖网页草稿，确认？'))return;try{const value=await api('/api/clipboard',{write:false});text.value=value.text;dirty=true;textState('剪贴板已读为草稿，未写入手机');}catch(error){log(String(error));}});
   q('.clipboard-write').addEventListener('click',async()=>{try{await api('/api/clipboard',{write:true,text:text.value});log('剪贴板写入请求已发送；未自动粘贴');}catch(error){log(String(error));}});
   q('.nodes-refresh').addEventListener('click',async()=>{try{update(await api('/api/refresh',{}));}catch(error){log(String(error));}});
   q('.timeline-copy').addEventListener('click',()=>void navigator.clipboard.writeText(q('.results').textContent||'').catch(()=>log('复制失败，请选择时间线文字复制')));
   qa('[data-filter]').forEach(b=>b.addEventListener('click',()=>{filter=b.dataset.filter!;renderNodes();}));q<HTMLInputElement>('.node-search').addEventListener('input',e=>{query=(e.target as HTMLInputElement).value;renderNodes();});
-  for(const [selector,action]of [['.inspect-click','click'],['.inspect-hold','longPress'],['.inspect-focus','focus'],['.inspect-toggle','setChecked']])q(selector!).addEventListener('click',()=>{if(!inspected)return;void perform('/api/node',{target:{...target(inspected.node),snapshotId:inspected.snapshotId},action,value:action==='setChecked'?!inspected.node.checked:undefined}).then(()=>{if(action==='focus')void detectTarget(true);}).catch(()=>{});});
+  for(const [selector,action]of [['.inspect-click','click'],['.inspect-hold','longPress'],['.inspect-focus','focus'],['.inspect-toggle','setChecked']])q(selector!).addEventListener('click',()=>{if(!inspected)return;void perform('/api/node',{target:{...target(inspected.node),snapshotId:inspected.snapshotId},action,value:action==='setChecked'?!inspected.node.checked:undefined}).catch(()=>{});});
   q('.properties').addEventListener('click',()=>{if(inspected)log(JSON.stringify(inspected.node,null,2));});
   q('.locate').addEventListener('click',()=>{if(!inspected)return;const [l,t,r,b]=inspected.node.bounds,box=q<HTMLElement>('.highlight-box');box.hidden=false;box.style.left=l/observation.width*100+'%';box.style.top=t/observation.height*100+'%';box.style.width=(r-l)/observation.width*100+'%';box.style.height=(b-t)/observation.height*100+'%';});
   async function releaseInput(){cancelPointer();if(control?.readyState===1)control.send(JSON.stringify({type:'release'}));held.clear();}
-  q('.capture').addEventListener('click',()=>{(bindValid()?proxy:phone).focus();route();});q('.release').addEventListener('click',()=>{q<HTMLButtonElement>('.release').focus();void releaseInput();route();});
+  q('.capture').addEventListener('click',()=>{phone.focus();route();});q('.release').addEventListener('click',()=>{q<HTMLButtonElement>('.release').focus();void releaseInput();route();});
   root.addEventListener('focusin',route);root.addEventListener('focusout',()=>setTimeout(()=>{if(document.activeElement!==phone)void releaseInput();route();},0));
   addEventListener('blur',()=>{if(document.activeElement===phone)phone.blur();void releaseInput();route();});document.addEventListener('visibilitychange',()=>{if(document.hidden){if(document.activeElement===phone)phone.blur();void releaseInput();}route();});
   const held=new Map<string,{code:number;repeat:number}>();
@@ -171,7 +166,7 @@ async function initialize() {
   const browserKeys:Record<string,string>={Backspace:'Backspace',Escape:'Escape',Enter:'Enter',Tab:'Tab',Space:'Space',ArrowUp:'ArrowUp',ArrowDown:'ArrowDown',ArrowLeft:'ArrowLeft',ArrowRight:'ArrowRight',Home:'MoveHome',End:'MoveEnd',Delete:'ForwardDelete',ShiftLeft:'ShiftLeft',ShiftRight:'ShiftRight',ControlLeft:'ControlLeft',ControlRight:'ControlRight',AltLeft:'AltLeft',AltRight:'AltRight'};
   function metaKeys(e:KeyboardEvent){return (e.shiftKey?1:0)|(e.altKey?2:0)|(e.ctrlKey?4096:0)|(e.metaKey?65536:0);}
   function keyCode(e:KeyboardEvent){return keys[e.code]??keys[browserKeys[e.code]||''];}
-  phone.addEventListener('keydown',e=>{if(e.key==='Escape'){e.preventDefault();q<HTMLButtonElement>('.release').focus();void releaseInput();return;}if(e.key==='Tab')return;if(e.isComposing||e.key==='Process'){log('中文请使用文字同步输入框');return;}const code=keyCode(e);if(code===undefined||!interactive()||control?.readyState!==1||!observation.controlAvailable)return;e.preventDefault();if(!observation.focus&&((code>=29&&code<=54)||code===67))log('未确认文字焦点；当前仅发送原始硬件按键，文字效果未验证');if(pending||(auto&&dirty)||(!controlAllowed||appsBusy)){log('文本待确认或设备忙，按键未发送');return;}const repeat=(held.get(e.code)?.repeat??-1)+1;held.set(e.code,{code,repeat});control.send(JSON.stringify({type:'key',request:crypto.randomUUID(),action:0,code,meta:metaKeys(e),repeat}));});
+  phone.addEventListener('keydown',e=>{if(e.key==='Escape'){e.preventDefault();text.focus();void releaseInput();return;}if(e.key==='Tab')return;if(e.isComposing||e.key==='Process'){log('中文请在网页草稿框填写，再点击“填写到手机”');return;}const code=keyCode(e);if(code===undefined||!interactive()||control?.readyState!==1||!observation.controlAvailable)return;e.preventDefault();if(!observation.focus&&((code>=29&&code<=54)||code===67))log('未确认文字焦点；当前仅发送原始硬件按键，文字效果未验证');if(!controlAllowed||appsBusy){log('设备忙，按键未发送');return;}const repeat=(held.get(e.code)?.repeat??-1)+1;held.set(e.code,{code,repeat});control.send(JSON.stringify({type:'key',request:crypto.randomUUID(),action:0,code,meta:metaKeys(e),repeat}));});
   phone.addEventListener('keyup',e=>{const previous=held.get(e.code);if(!previous)return;e.preventDefault();held.delete(e.code);if(control?.readyState===1)control.send(JSON.stringify({type:'key',request:crypto.randomUUID(),action:1,code:previous.code,meta:metaKeys(e),repeat:0}));});
   let pointer:{id:number;browserId:number;x:number;y:number;lastX:number;lastY:number;time:number;width:number;height:number;upSeen:boolean}|null=null;
   let movePending:PointerEvent|null=null,moveFrame=0,holdTimer:ReturnType<typeof setTimeout>|undefined;
@@ -181,7 +176,7 @@ async function initialize() {
   function clearMove(){cancelAnimationFrame(moveFrame);moveFrame=0;movePending=null;}
   function cancelPointer(send=true){clearMove();clearTimeout(holdTimer);const old=pointer;if(!old)return;if(send)rawTouch(1,old.lastX,old.lastY);pointer=null;try{if(phone.hasPointerCapture(old.browserId))phone.releasePointerCapture(old.browserId);}catch{}}
   phone.addEventListener('dragstart',event=>event.preventDefault());
-  phone.addEventListener('pointerdown',event=>{if(pointer||event.button!==0||!online||waking)return;if(!interactive()){event.preventDefault();if(!waking)void wakePhone();return;}if(control?.readyState!==1||!meta.width||!observation.controlAvailable||pending||(auto&&dirty)||(!controlAllowed||appsBusy))return;event.preventDefault();const p=point(event);pointer={id:10,browserId:event.pointerId,x:p.x,y:p.y,lastX:p.x,lastY:p.y,time:Date.now(),width:meta.width,height:meta.height,upSeen:false};phone.focus();try{phone.setPointerCapture(event.pointerId);}catch{}showTouch(p.x,p.y);rawTouch(0,p.x,p.y);});
+  phone.addEventListener('pointerdown',event=>{if(pointer||event.button!==0||!online||waking)return;if(!interactive()){event.preventDefault();if(!waking)void wakePhone();return;}if(control?.readyState!==1||!meta.width||!observation.controlAvailable||!controlAllowed||appsBusy)return;event.preventDefault();const p=point(event);pointer={id:10,browserId:event.pointerId,x:p.x,y:p.y,lastX:p.x,lastY:p.y,time:Date.now(),width:meta.width,height:meta.height,upSeen:false};phone.focus();try{phone.setPointerCapture(event.pointerId);}catch{}showTouch(p.x,p.y);rawTouch(0,p.x,p.y);});
   // Document listeners also finish drags when pointer capture is unavailable.
   document.addEventListener('pointermove',event=>{if(!pointer||pointer.upSeen||event.pointerId!==pointer.browserId)return;movePending=event;if(moveFrame)return;moveFrame=requestAnimationFrame(()=>{moveFrame=0;if(!movePending||!pointer)return;const p=point(movePending);movePending=null;pointer.lastX=p.x;pointer.lastY=p.y;rawTouch(2,p.x,p.y);});},true);
   document.addEventListener('pointerup',event=>{if(!pointer||pointer.upSeen||event.pointerId!==pointer.browserId)return;const p=point(event),old=pointer;clearMove();old.upSeen=true;old.lastX=p.x;old.lastY=p.y;
@@ -190,7 +185,7 @@ async function initialize() {
     if(mode==='hold'&&Math.hypot(p.x-old.x,p.y-old.y)<15&&Date.now()-old.time<700){holdTimer=setTimeout(()=>{if(pointer===old)cancelPointer();},700-(Date.now()-old.time));}else cancelPointer();},true);
   document.addEventListener('pointercancel',event=>{if(pointer?.browserId===event.pointerId)void releaseInput();},true);
   phone.addEventListener('lostpointercapture',event=>{if(pointer?.browserId===event.pointerId&&!pointer.upSeen)cancelPointer();});
-  phone.addEventListener('click',event=>{if(online&&!interactive()&&!waking)void wakePhone();else if(interactive()&&controlAllowed&&!appsBusy&&!pending&&event.detail===0&&!waking)void perform('/api/gesture',{kind:'tap',x:observation.width/2,y:observation.height/2}).catch(()=>{});});
+  phone.addEventListener('click',event=>{if(online&&!interactive()&&!waking)void wakePhone();else if(interactive()&&controlAllowed&&!appsBusy&&event.detail===0&&!waking)void perform('/api/gesture',{kind:'tap',x:observation.width/2,y:observation.height/2}).catch(()=>{});});
   qa('[data-panel]').forEach(button=>button.addEventListener('click',()=>void perform('/api/panel',{kind:button.dataset.panel}).catch(()=>{})));
   q('.video-reconnect').addEventListener('click',()=>{if(!online)return;videoManager?.stop();connectVideo();log('重新建立视频，不改变设备控制连接');});
   q('.video-enlarge').addEventListener('click',()=>{phonePane.classList.toggle('enlarged');q('.video-enlarge').textContent=phonePane.classList.contains('enlarged')?'退出放大':'放大查看';fitPhone();});
@@ -219,19 +214,19 @@ async function initialize() {
   for(const method of boot.apiMethods){const entry=document.createElement('section');entry.className='api-entry';const head=document.createElement('h3');head.className='api-signature';head.textContent=method.signature;entry.append(head);for(const value of [method.purpose,method.params,method.result]){const p=document.createElement('p');p.textContent=value;entry.append(p);}const example=document.createElement('pre');example.className='api-example';example.textContent=method.example;const note=document.createElement('p');note.className='dim';note.textContent=method.note;const button=document.createElement('button');button.type='button';button.className='api-insert';button.textContent='插入 '+method.name+' 示例';button.addEventListener('click',()=>{editor.setRangeText(method.example+'\n',editor.selectionStart,editor.selectionEnd,'end');apiVisibility(false,true);});entry.append(example,note,button);q('.api-details').append(entry);}
   q('.api-toggle').addEventListener('click',()=>apiVisibility(!!q<HTMLElement>('.api-panel').hidden));q('.api-panel').addEventListener('keydown',event=>{if((event as KeyboardEvent).key==='Escape'){event.preventDefault();event.stopPropagation();apiVisibility(false,true);}});
   function offlineReason(reason:string){if(reason==='IDLE_TIMEOUT')return '5分钟无操作，本页已断开；刷新或点击重新连接即可继续。';return reason==='PAGE_REPLACED'?'另一页面已连接，本页已离线；本页批量操作已停止。':reason==='SERVER_RESTART'?'服务已重启，请刷新页面重新连接。':['LOGIN_REQUIRED','LOGGED_OUT'].includes(reason)?'登录已失效，请刷新并重新登录。':'连接已断开，画面和状态已暂停。';}
-  function renderPhone(){const known=!!observation.powerCollectedAt,awake=observation.screenOn,unlocked=observation.locked===false;
+  function renderPhone(){const known=powerKnown(),awake=observation.screenOn,unlocked=observation.locked===false;
     const title=!online?(connecting?'正在连接':'已离线'):waking?'正在唤醒并解锁':!known?'正在读取手机状态':!awake?'屏幕已关闭':!unlocked?'手机已锁屏':'';
     q<HTMLElement>('.screen-shield').hidden=!title;assign(q('.screen-title'),title);
     assign(q('.screen-help'),!online?'画面非实时。点击页面上方「重新连接」或刷新。':waking?'正在唤醒并请求解锁…':!known?'视频暂停，画面非实时。请稍候。':!awake||!unlocked?'视频已暂停，画面非实时。点击画面或下方「唤醒并解锁」。若未解锁，请在手机上完成。':'');
     assign(q('.device-status'),!known?'正在读取手机状态':!awake?'屏幕已关闭':!unlocked?'已锁屏':'已解锁');
     phone.setAttribute('aria-label',!online?'手机画面，当前页面已离线':!awake||!unlocked?'手机画面，点击唤醒并解锁':'手机画面，支持点击、长按和拖动，聚焦后键盘输入手机');
     q<HTMLButtonElement>('.wake').disabled=!online||waking||taskBusy||appsBusy;
-    qa('[data-press],[data-gesture],[data-mode],[data-panel]').forEach(b=>(b as HTMLButtonElement).disabled=!interactive()||!controlAllowed||appsBusy||!!pending);
+    qa('[data-press],[data-gesture],[data-mode],[data-panel]').forEach(b=>(b as HTMLButtonElement).disabled=!interactive()||!controlAllowed||appsBusy);
     videoManager?.pauseChanged();renderVideoState();
   }
   async function wakePhone(){if(!online||waking||taskBusy||appsBusy)return;waking=true;renderPhone();try{const result=await perform('/api/wake',{});if(result){observation.screenOn=result.screenOn;observation.locked=result.locked;observation.powerCollectedAt=Date.now();}}
     catch(e){log(String(e));}finally{waking=false;renderPhone();textState();details();}}
-  function goOffline(message:string){document.querySelector<HTMLDialogElement>('.action-confirmation')?.close('cancel');if(!online&&!connecting)return;if(message.includes('服务已重启')||message.includes('登录已失效'))needsRefresh=true;online=false;connecting=false;connectionEpoch++;networkAbort.abort();auto=false;binding=null;if(currentTask)currentTask={...currentTask,canStop:false};clearTimeout(debounce);held.clear();cancelPointer(false);
+  function goOffline(message:string){document.querySelector<HTMLDialogElement>('.action-confirmation')?.close('cancel');if(!online&&!connecting)return;if(message.includes('服务已重启')||message.includes('登录已失效'))needsRefresh=true;if(message.includes('登录已失效'))sessionStorage.setItem('android-console-login-reason','登录状态已失效，请重新登录。');online=false;connecting=false;connectionEpoch++;networkAbort.abort();if(currentTask)currentTask={...currentTask,canStop:false};held.clear();cancelPointer(false);
     applications?.pause();const sockets=[eventsSocket,control];eventsSocket=null;control=null;for(const socket of sockets)try{socket?.close();}catch{}
     videoManager?.stop();canvas.pause();phone.dataset.videoConnection='closed';
     q<HTMLElement>('.workspace').inert=true;assign(q('.page-status'),'已离线');q('.page-status').setAttribute('data-state','offline');q<HTMLElement>('.page-reconnect').hidden=false;q<HTMLElement>('.connection-note').hidden=false;
@@ -240,8 +235,8 @@ async function initialize() {
   async function connectPage(explicit=false){if(connecting)return;connecting=true;online=false;const epoch=++connectionEpoch;networkAbort=new AbortController();q<HTMLElement>('.workspace').inert=true;
     assign(q('.page-status'),'连接中');q('.page-status').setAttribute('data-state','connecting');q<HTMLElement>('.page-reconnect').hidden=true;q<HTMLElement>('.connection-note').hidden=false;assign(q('.connection-note'),'正在连接；后打开的页面会接替之前的页面。');renderPhone();
     try{const r=await fetch(endpoint('/api/connection/connect'),{method:'POST',headers:{'Content-Type':'application/json','X-Console-CSRF':boot.csrf},body:JSON.stringify({pageId:boot.pageId,explicit}),signal:networkAbort.signal});const result=await r.json();if(epoch!==connectionEpoch)return;
-      if(!r.ok){needsRefresh=['PAGE_EXPIRED','LOGIN_REQUIRED','CSRF_REJECTED'].includes(result.error?.code);throw new Error(result.error?.message||'连接失败');}
-      connectionId=result.connectionId;online=true;connecting=false;needsRefresh=false;frameRequiredAfter=performance.now();q<HTMLElement>('.workspace').inert=false;assign(q('.page-status'),'在线');q('.page-status').setAttribute('data-state','online');q<HTMLElement>('.connection-note').hidden=true;
+      if(!r.ok){needsRefresh=['PAGE_EXPIRED','LOGIN_REQUIRED','CSRF_REJECTED'].includes(result.error?.code);if(result.error?.code==='LOGIN_REQUIRED')sessionStorage.setItem('android-console-login-reason','登录状态已失效，请重新登录。');throw new Error(result.error?.message||'连接失败');}
+      sessionStorage.removeItem('android-console-login-reason');connectionId=result.connectionId;online=true;connecting=false;needsRefresh=false;frameRequiredAfter=performance.now();q<HTMLElement>('.workspace').inert=false;assign(q('.page-status'),'在线');q('.page-status').setAttribute('data-state','online');q<HTMLElement>('.connection-note').hidden=true;
       videoProvider=undefined;connectEvents();connectControl();void connectVideo();applications?.resume();update(observation);q<HTMLAnchorElement>('.task-link').href=viewUrl(currentTask?'/tasks/'+currentTask.id:'/observe');
     }catch(error){if(epoch===connectionEpoch)goOffline(error instanceof Error?error.message:String(error));}
   }
@@ -252,7 +247,6 @@ async function initialize() {
     if(data.type==='offline'){goOffline(offlineReason(data.reason));return;}
     if(data.type==='observation'){ownsControl=data.ownsControl;controlAllowed=data.controlAllowed;taskBusy=data.taskBusy;update(data.state);}
     else if(data.type==='power'){observation.screenOn=data.screenOn;observation.locked=data.locked;observation.powerCollectedAt=data.powerCollectedAt;if(!interactive())void releaseInput();renderPhone();textState();details();}
-    else if(data.type==='focus'){observation.focus=data.focus;observation.focusEpoch=data.focusEpoch;observation.focusCollectedAt=data.focusCollectedAt;observation.focusReason=data.focusReason;observation.snapshotId=data.snapshotId;if(data.focus){const index=observation.nodes.findIndex(n=>n.id===data.focus.id);if(index>=0)observation.nodes[index]=data.focus;}update(observation);}
     else if(data.type==='task')task(data.task);else if(data.type==='tasks')for(const t of data.tasks)task(t);
   };events.onclose=event=>{if(online&&epoch===connectionEpoch)goOffline(offlineReason(event.reason));};}
   function ensureVideoManager(){
@@ -294,7 +288,7 @@ async function initialize() {
     catch{assign(status,'复制失败，请手动选择诊断文本');}finally{button.disabled=false;}});
   async function updateNetwork(){if(!network?.open||!online||networkLoading)return;const epoch=connectionEpoch;networkLoading=true;try{const server=await api('/api/webrtc/status');if(online&&epoch===connectionEpoch)q('.video-network-data').textContent=JSON.stringify({browser:{...(networkInfo as object||{}),state:phone.dataset.videoConnection,provider:videoProvider||null},server},null,2);}catch(error){if(online&&epoch===connectionEpoch)q('.video-network-data').textContent=String(error);}finally{networkLoading=false;}}
   network?.addEventListener('toggle',()=>void updateNetwork());
-  setInterval(()=>{renderVideoState();if(online)void updateNetwork();},1000);
+  setInterval(()=>{renderPhone();inputAvailability();if(online)void updateNetwork();},1000);
   let lastActivitySent=0;const activity=()=>{if(!online||Date.now()-lastActivitySent<3000)return;lastActivitySent=Date.now();void api('/api/activity',{}).catch(()=>{});};for(const name of ['pointerdown','keydown','input','wheel','change'])root.addEventListener(name,activity,{capture:true,passive:true});
   keyboard();void connectPage();
 }

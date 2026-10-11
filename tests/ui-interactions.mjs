@@ -34,6 +34,7 @@ try {
     window.__messages=[];
     window.__sockets=[];
     window.__offers=0;
+    setInterval(()=>{for(const socket of window.__sockets)if(socket.url.includes('/ws/events'))socket.onmessage?.({data:JSON.stringify({type:'power',screenOn:true,locked:false,powerCollectedAt:Date.now()})});},1000);
     window.__clockOffset=0;
     const nativeNow=performance.now.bind(performance);
     performance.now=()=>nativeNow()+window.__clockOffset;

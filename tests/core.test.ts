@@ -1,3 +1,4 @@
+import {currentDraftTarget,focusedTextNode} from '../src/text-draft.js';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {fork} from 'node:child_process';
@@ -35,22 +36,36 @@ test('screen-off and locked input are rejected instead of touching a stale frame
 test('wake requests system unlock and reports credentials still required without touching',async()=>{const d=new Device('test','unused','unused');let calls:string[]=[];d.video.start=async()=>{};d.video.press=async code=>{calls.push('key:'+code);};d.bridge.call=async method=>{calls.push(method);return {} as any;};d.refreshPower=async()=>{d.state.screenOn=true;d.state.locked=true;};const result=await d.wake('page');assert.deepEqual(calls,['key:224','unlock']);assert.equal(result.status,'unlock_required');assert.equal(result.locked,true);});
 test('wake waits for asynchronous system dismissal before confirming success',async()=>{const d=new Device('test','unused','unused');let reads=0;d.video.start=async()=>{};d.video.press=async()=>{};d.bridge.call=async()=>({}) as any;d.refreshPower=async()=>{d.state.screenOn=true;d.state.locked=++reads<3;};const result=await d.wake('page');assert.equal(reads,3);assert.equal(result.status,'ok');});
 test('a cancelled double tap cannot send its second press',async()=>{const d=new Device('test','unused','unused'),abort=new AbortController(),actions:number[]=[];Object.assign(d.state,{width:1080,height:2400,screenOn:true,locked:false,powerCollectedAt:Date.now(),controlAvailable:true});d.video.width=864;d.video.height=1920;d.video.touch=async action=>{actions.push(action);if(action===1)abort.abort();};await assert.rejects(d.gesture('page','doubleTap',{x:540,y:1200},undefined,abort.signal),/停止/);assert.deepEqual(actions,[0,1]);});
-test('binding uses native Unicode text rather than a lossy XML value',async()=>{
-  const d=new Device('test','unused','unused'),xml=node({editable:true,focused:true,text:'中文..'}),native={...xml,text:'中文😀',fingerprint:'native'};
-  d.state.nodes=[xml];d.state.focus=xml;d.collect=async()=>d.state;
-  d.bridge.call=async()=>({editable:true,password:false,className:xml.className,resourceId:xml.resourceId,text:native.text,node:native}) as any;
-  const result=await d.bindCurrent();assert.equal(result.text,'中文😀');assert.equal(result.binding.target.fingerprint,'native');
+function textFixture(){const d=new Device('test','unused','unused'),n=node({editable:true,focused:true,text:'old'});d.state.nodes=[n];d.state.focus=n;Object.assign(d.state,{screenOn:true,locked:false,powerCollectedAt:Date.now(),uiError:null});d.collect=async()=>d.state;return {d,n,target:{id:n.id,fingerprint:n.fingerprint}};}
+test('one-shot reads preserve native Unicode without requiring focus',async()=>{
+  const {d,n,target}=textFixture();n.focused=false;d.state.focus=null;d.bridge.call=async(method)=>{assert.equal(method,'readText');return {text:'中文😀'} as any;};
+  assert.equal((await d.readText('owner',target)).text,'中文😀');
 });
-test('a text conflict preserves phone content without issuing a write',async()=>{
-  const d=new Device('test','unused','unused'),n=node({editable:true,focused:true,text:'phone changed'});d.state.nodes=[n];d.state.focus=n;Object.assign(d.state,{screenOn:true,locked:false,powerCollectedAt:Date.now()});
-  let writes=0;d.bridge.call=async(method)=>{if(method==='setText'){writes++;assert.fail('must not overwrite');}return {editable:true,password:false,className:n.className,resourceId:n.resourceId,text:n.text,node:n} as any;};
-  await assert.rejects(d.boundText('session',d.binding(),'draft','old value'),/手机文字已从其他输入路径改变/);assert.equal(writes,0);
+test('one-shot text rejects a stale target before issuing a write',async()=>{
+  const {d,n,target}=textFixture();n.fingerprint='changed';d.bridge.call=async()=>{assert.fail('must not write');return {} as any;};
+  await assert.rejects(d.nodeAction('owner',target,'setText','draft'),/所选节点已变化/);
 });
-test('a text write is not reported successful when native confirmation differs',async()=>{
-  const d=new Device('test','unused','unused'),n=node({editable:true,focused:true,text:'old'});d.state.nodes=[n];d.state.focus=n;Object.assign(d.state,{screenOn:true,locked:false,powerCollectedAt:Date.now()});
-  d.bridge.call=async(method)=>method==='setText'?{text:'different'} as any:{editable:true,password:false,className:n.className,resourceId:n.resourceId,text:n.text,node:n} as any;
-  await assert.rejects(d.boundText('session',d.binding(),'new','old'),/写入期间焦点或文字发生变化/);
+test('one-shot writing verifies the original field even after autofocus advances',async()=>{
+  const {d,n,target}=textFixture();let writes=0;d.bridge.call=async(method)=>{assert.equal(method,'setText');writes++;n.focused=false;d.state.focus=null;return {written:true,text:'new',verification:'verified'} as any;};
+  const result=await d.nodeAction('owner',target,'setText','new');assert.equal(result.verification,'verified');assert.equal(writes,1);
 });
+test('mismatched or unavailable text confirmation is reported without retry',async()=>{
+  for(const [confirmation,expected] of [[{text:'different'},'failed'],[{written:true,verification:'inconclusive'},'inconclusive']] as const){
+    const {d,target}=textFixture();let writes=0;d.bridge.call=async()=>{writes++;return confirmation as any;};
+    await assert.rejects(d.nodeAction('owner',target,'setText','new'),(error:any)=>error.execution==='sent'&&error.verification===expected);assert.equal(writes,1);
+  }
+});
+test('confirmed text remains confirmed when the app transitions to an unreadable UI',async()=>{
+  const {d,n,target}=textFixture();let written=false;d.collect=Device.prototype.collect.bind(d);
+  d.bridge.call=async method=>{
+    if(method==='setText'){written=true;return {text:'new',verification:'verified'} as any;}
+    if(method==='power')return {screenOn:true,locked:false} as any;
+    if(written)throw new ConsoleError('UI_ROOT_UNAVAILABLE','new page cannot expose UI',503);
+    return {nodes:[n],width:1080,height:2400,rotation:0,screenOn:true,locked:false,windowId:'fixture'} as any;
+  };
+  const result=await d.nodeAction('owner',target,'setText','new');assert.equal(result.verification,'verified');assert.ok(d.state.uiError);
+});
+
 const navigation=(taskId=12,userId=0):Navigation=>({userId,collectedAt:Date.now(),locked:false,internalStack:'unknown',tasks:[],current:{taskId,userId,component:'app.one/.Main'}});
 function navigationFixture(states:Navigation[]){const d=new Device('test','unused','unused');d.state.controlAvailable=true;Object.assign(d.state,{screenOn:true,locked:false,powerCollectedAt:Date.now()});d.collect=async()=>d.state;let reads=0,presses=0;d.navigation=async()=>states[Math.min(reads++,states.length-1)]!;d.video.press=async()=>{presses++;};return {d,presses:()=>presses};}
 test('multi-back stops after a task transition instead of sending remaining presses',async()=>{const f=navigationFixture([navigation(),navigation(),navigation(13)]);const result=await f.d.back('owner',{steps:3,intervalMs:100});assert.equal(result.completed,1);assert.equal(result.reason,'task_changed');assert.equal(f.presses(),1);});
@@ -73,3 +88,19 @@ test('syntax checking compiles without calling the SDK or executing escaped code
 test('invalid JavaScript is rejected',async()=>{const result=await worker('return {',true);assert.equal(result.status,'failed');assert.equal(result.rpc,0);});
 
 test('QuickJS click, long press and toggle forward jitter options without changing old calls',async()=>{const result=await worker('return [await device.element({text:"按钮"}).click(),await device.element({text:"按钮"}).click({jitter:false}),await device.element({text:"按钮"}).longPress({durationMs:800,jitter:true}),await device.element({text:"按钮"}).setChecked(true,{jitter:false})];');assert.equal(result.status,'done');assert.deepEqual(result.result.map((x:any)=>x.params.clickOptions),[{},{jitter:false},{jitter:true},{jitter:false}]);assert.equal(result.result[2].params.value,800);assert.equal(result.result[3].params.value,true);});
+
+
+test('draft targets never guess among multiple focused fields or silently follow changed focus',()=>{
+  const {d,n}=textFixture(),selection={node:structuredClone(n),windowId:d.state.windowId,source:'focus' as const};
+  assert.equal(focusedTextNode(d.state)?.id,n.id);assert.equal(currentDraftTarget(d.state,selection)?.id,n.id);
+  const second={...n,id:'second'};d.state.nodes.push(second);assert.equal(focusedTextNode(d.state),null);assert.equal(currentDraftTarget(d.state,selection),null);
+  n.focused=false;d.state.focus=second;assert.equal(currentDraftTarget(d.state,selection),null);
+  assert.equal(currentDraftTarget(d.state,{...selection,source:'selected'})?.id,n.id);
+  d.state.windowId='new-window';assert.equal(currentDraftTarget(d.state,{...selection,source:'selected'}),null);
+});
+
+test('failed power reads mark prior screen state unknown and successful reads recover',async()=>{
+  const {d}=textFixture();d.bridge.call=async()=>{throw Error('device offline');};
+  await assert.rejects(d.refreshPower(),/device offline/);assert.ok(d.state.powerError);
+  d.bridge.call=async()=>({screenOn:true,locked:false}) as any;await d.refreshPower();assert.equal(d.state.powerError,null);
+});
