@@ -1,4 +1,6 @@
 import {currentDraftTarget,focusedTextNode} from '../src/text-draft.js';
+import {TouchControl} from '../src/touch-control.js';
+import {randomUUID} from 'node:crypto';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {fork} from 'node:child_process';
@@ -103,4 +105,73 @@ test('failed power reads mark prior screen state unknown and successful reads re
   const {d}=textFixture();d.bridge.call=async()=>{throw Error('device offline');};
   await assert.rejects(d.refreshPower(),/device offline/);assert.ok(d.state.powerError);
   d.bridge.call=async()=>({screenOn:true,locked:false}) as any;await d.refreshPower();assert.equal(d.state.powerError,null);
+});
+
+function touchFixture(clock=Date.now){
+  const device=new Device('fixture','unused','unused'),events:any[]=[],replies:any[]=[];
+  Object.assign(device.state,{screenOn:true,locked:false,powerCollectedAt:Date.now(),controlAvailable:true});device.video.width=864;device.video.height=1920;
+  device.video.client={controller:{injectTouch:async(p:any)=>events.push(p),injectKeyCode:async()=>{}}} as any;
+  device.bridge.call=async()=>{assert.fail('real-time touch must not wait on native UI queries');return {} as any;};
+  const stream=new TouchControl(device,'owner',data=>replies.push(data),clock),gesture=randomUUID();
+  const message=(seq:number,action:number,id=10,x=20,y=20)=>({type:'touch',gesture,seq,action,id,x,y,t:seq,width:864,height:1920});
+  return {device,events,replies,stream,gesture,message};
+}
+test('touch batches preserve every curve point and final UP while bypassing UI queries',async()=>{
+  const f=touchFixture();f.stream.receive(f.message(0,0));
+  f.stream.receive({type:'touch-move',gesture:f.gesture,seq:1,width:864,height:1920,points:[{id:10,x:40,y:20,t:1},{id:10,x:40,y:40,t:2},{id:10,x:20,y:40,t:3}]});
+  f.stream.receive(f.message(4,1,10,21,40));await f.stream.drain();
+  assert.deepEqual(f.events.map(p=>[p.action,p.pointerX,p.pointerY]),[[0,20,20],[2,40,20],[2,40,40],[2,20,40],[1,21,40]]);
+  assert.equal(f.replies.at(-1).seq,4);assert.equal(f.device.touching,false);
+});
+test('touch stream accepts two pointers and preserves their individual release order',async()=>{
+  const f=touchFixture();f.stream.receive(f.message(0,0));f.stream.receive(f.message(1,0,11,100,100));
+  f.stream.receive(f.message(2,1));f.stream.receive(f.message(3,1,11,100,100));await f.stream.drain();
+  assert.deepEqual(f.events.map(p=>[p.action,Number(p.pointerId)]),[[0,10],[0,11],[1,10],[1,11]]);assert.equal(f.device.touching,false);
+});
+test('keyboard release and DOM focus changes cannot release a pressed touch',async()=>{
+  const f=touchFixture();f.stream.receive(f.message(0,0));await f.stream.drain();await f.device.video.releaseKeys();
+  assert.deepEqual(f.events.map(p=>p.action),[0]);await f.stream.close();assert.deepEqual(f.events.map(p=>p.action),[0,1]);
+});
+test('sequence gaps cancel native touch and never replay subsequent queued samples',async()=>{
+  const f=touchFixture();f.stream.receive(f.message(0,0));await f.stream.drain();f.stream.receive(f.message(2,1));await f.stream.drain();
+  assert.equal(f.replies.at(-1).code,'TOUCH_SEQUENCE');assert.deepEqual(f.events.map(p=>p.action),[0,1]);assert.equal(f.device.touching,false);
+});
+test('display rotation releases a held touch even when its UP has obsolete dimensions',async()=>{
+  const f=touchFixture();f.stream.receive(f.message(0,0));await f.stream.drain();f.device.video.width=1920;f.device.video.height=864;
+  f.stream.receive(f.message(1,1));await f.stream.drain();assert.deepEqual(f.events.map(p=>p.action),[0,1]);assert.equal(f.device.touching,false);assert.equal(f.replies.at(-1).code,'STALE_FRAME');
+});
+test('touch and long-running actions exclude each other without queuing stale DOWN',async()=>{
+  const f=touchFixture();let release!:()=>void;const running=f.device.enqueue('owner',()=>new Promise<void>(resolve=>release=resolve));await Promise.resolve();
+  f.stream.receive(f.message(0,0));await f.stream.drain();assert.equal(f.replies.at(-1).code,'DEVICE_BUSY');assert.equal(f.events.length,0);release();await running;
+  const next={...f.message(0,0),gesture:randomUUID()};f.stream.receive(next);await f.stream.drain();assert.throws(()=>f.device.enqueue('owner',async()=>{}),/手势进行中/);await f.stream.close();
+});
+test('overdue input is cancelled before injection, rather than played rapidly after a stall',async()=>{
+  let now=1000;const f=touchFixture(()=>now);f.stream.receive(f.message(0,0));now=2500;await f.stream.drain();
+  assert.equal(f.replies.at(-1).code,'CONTROL_BACKLOG');assert.equal(f.events.length,0);assert.equal(f.device.touching,false);
+});
+test('changing page authority fences native MOVE and still releases the old touch',async()=>{
+  const f=touchFixture();f.stream.receive(f.message(0,0));await f.stream.drain();f.device.authorize=()=>{throw new ConsoleError('PAGE_OFFLINE','offline',409);};
+  f.stream.receive(f.message(1,1));await f.stream.drain();assert.deepEqual(f.events.map(p=>p.action),[0,1]);assert.equal(f.replies.at(-1).code,'PAGE_OFFLINE');
+});
+test('a late cancellation from a completed gesture cannot cancel the next gesture',async()=>{
+  const f=touchFixture();f.stream.receive(f.message(0,0));await f.stream.drain();f.stream.receive(f.message(1,1));
+  const next=randomUUID();f.stream.receive({...f.message(0,0),gesture:next});await f.stream.drain();await f.stream.cancel(f.gesture);
+  assert.deepEqual(f.events.map(p=>p.action),[0,1,0]);assert.equal(f.device.touching,true);
+  f.stream.receive({...f.message(1,1),gesture:next});await f.stream.drain();assert.deepEqual(f.events.map(p=>p.action),[0,1,0,1]);
+});
+test('closing transport fences touch waiting behind a native writer',async()=>{
+  const f=touchFixture();let unblock!:()=>void;f.device.video.client!.controller!.injectKeyCode=async()=>new Promise<void>(resolve=>unblock=resolve);
+  const blocker=f.device.video.key(0,4);await Promise.resolve();f.stream.receive(f.message(0,0));await Promise.resolve();
+  const close=f.stream.close();unblock();await blocker;await close;await f.stream.drain();assert.equal(f.events.length,0);assert.equal(f.device.touching,false);
+});
+
+test('a full touch queue cancels rather than losing UP or growing without bound',async()=>{
+  const f=touchFixture();f.stream.receive(f.message(0,0));await f.stream.drain();
+  for(let batch=0;batch<4;batch++)f.stream.receive({type:'touch-move',gesture:f.gesture,seq:1+batch*64,width:864,height:1920,points:Array.from({length:64},(_,i)=>({id:10,x:30,y:30,t:1+batch*64+i}))});
+  f.stream.receive(f.message(257,1));await f.stream.drain();assert.equal(f.replies.at(-1).code,'CONTROL_BACKLOG');assert.deepEqual(f.events.map(p=>p.action),[0,1]);assert.equal(f.device.touching,false);
+});
+test('lost client transport releases a held pointer while live hold heartbeats preserve it',async()=>{
+  let now=1000;const f=touchFixture(()=>now);f.stream.receive(f.message(0,0));await f.stream.drain();
+  now=4000;f.stream.keepalive(f.gesture);now=8000;f.stream.checkTimeout();assert.equal(f.device.touching,true);
+  now=10000;f.stream.checkTimeout();await f.stream.drain();assert.equal(f.replies.at(-1).code,'TOUCH_TIMEOUT');assert.deepEqual(f.events.map(p=>p.action),[0,1]);
 });

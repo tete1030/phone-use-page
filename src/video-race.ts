@@ -6,6 +6,8 @@ export interface RaceSlot<T extends RaceHandle>{id:string;provider:VideoTranspor
 export class VideoRace<T extends RaceHandle>{
   mode:VideoMode='auto';active?:RaceSlot<T>;
   private slots=new Map<VideoTransport,RaceSlot<T>>();private timers=new Map<VideoTransport,unknown>();private failures=new Map<VideoTransport,number>();private stopped=true;
+  private held=false;
+  holdSelection(held:boolean){this.held=held;if(!held&&!this.stopped){const best=[...this.slots.values()].sort((a,b)=>this.providers.indexOf(a.provider)-this.providers.indexOf(b.provider)).find(slot=>slot.ready&&!slot.closed&&this.eligible(slot.provider)&&(!this.active||this.providers.indexOf(slot.provider)<=this.providers.indexOf(this.active.provider)));if(best)this.promote(best);}}
   constructor(readonly providers:VideoTransport[],private options:{
     create:(slot:RaceSlot<T>,events:{ready:()=>void;failed:(reason:string)=>void})=>T;
     selected:(slot:RaceSlot<T>|undefined)=>void;
@@ -32,6 +34,9 @@ export class VideoRace<T extends RaceHandle>{
     slot.handle=this.options.create(slot,{ready:()=>this.ready(slot),failed:reason=>this.failed(slot,reason)});if(slot.closed)slot.handle.close();this.options.changed();
   }
   private ready(slot:RaceSlot<T>){if(slot.closed||slot.ready||this.stopped||!this.eligible(slot.provider))return;slot.ready=true;this.failures.set(slot.provider,0);
+    if(this.held&&this.active){this.options.changed();return;}this.promote(slot);
+  }
+  private promote(slot:RaceSlot<T>){
     if(!this.active||this.providers.indexOf(slot.provider)<this.providers.indexOf(this.active.provider)||this.active.provider===slot.provider){
       const previous=this.active;this.active=slot;this.options.selected(slot);if(previous&&previous!==slot)this.retire(previous);
       for(const other of [...this.slots.values()])if(this.providers.indexOf(other.provider)>this.providers.indexOf(slot.provider))this.retire(other);
@@ -39,7 +44,7 @@ export class VideoRace<T extends RaceHandle>{
     }this.options.changed();
   }
   private failed(slot:RaceSlot<T>,_reason:string){if(slot.closed||this.stopped)return;const wasActive=this.active===slot;
-    if(wasActive){this.active=undefined;this.options.selected(undefined);}this.retire(slot);
+    if(wasActive)this.active=undefined;this.retire(slot);if(wasActive)this.options.selected(undefined);
     const count=(this.failures.get(slot.provider)||0)+1;this.failures.set(slot.provider,count);
     if(wasActive){for(const provider of this.providers)if(this.eligible(provider))this.launch(provider);}
     else if(this.eligible(slot.provider)){const delay=Math.min(60000,5000*2**Math.min(count-1,4));this.timers.set(slot.provider,this.schedule(()=>{this.timers.delete(slot.provider);this.launch(slot.provider);},delay));}

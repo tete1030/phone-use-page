@@ -18,6 +18,7 @@
 | CPU 与依赖 | 手机原生 H.264 编码与主机 FFmpeg 软件编码是不同环节，可以关闭 WSS 自适应编码。其他架构的镜像/依赖可用性需自行验证；Linux x86 CI 不代表已验证 ARM、GPU 或所有 NAS 平台。 |
 | 浏览器与智能体 | WSS 需要支持 H.264 WebCodecs 的较新 Chromium，WebRTC 需要 H.264 解码。只看截图的智能体不能在视频上调用 `fill`；能操作 DOM 的智能体可填写网页草稿，再点击“填写到手机”执行一次替换。浏览器可能单独限制 TURN 或 UDP 直连，即使普通 HTTPS 可用。 |
 | DNS 与 TLS | 普通反向代理和自建 TURN 可使用任意 DNS/注册商及可信证书来源。证书名称、链和续期要匹配自己的主机名。Cloudflare TURN 不要求将控制台 DNS 迁移至 Cloudflare。Cloudflare Tunnel 是独立可选产品，有自己的域名要求。 |
+| 手机浏览器与触摸 | 窄屏采用画面优先布局；容器全屏不可用时回退网页内沉浸。支持 Pointer Events 的浏览器可直接操作，历史采样接口按能力使用。真实 iPhone/Safari 和远程桌面入口仍需实测；仅 WSS 必须支持 H.264 WebCodecs，不保证入口转发每个物理采样。 |
 | HTTPS 与代理 | 可使用任何正确保留 Host、原始协议和 WebSocket 升级的代理。需配置精确公网 origin、基础/ Cookie 路径及明确的可信代理 IP/CIDR。不将任意局域网 HTTP 视为支持的远程访问入口；使用 HTTPS 或 localhost 转发。 |
 | 网络拓扑 | 不假定路由器品牌、端口转发 API、公网 IPv4 或入站 80/443 可用。仅 WSS 可通过 HTTPS 代理/隧道工作，不需要 TURN 端口。自建 TURN 需真实可达；STUN 无法解决所有 NAT、CGNAT 或防火墙限制。 |
 | IPv4 与 IPv6 | 当前服务端 WebRTC 候选使用 IPv4，手动公网地址声明只接受 IPv4。HTTP、代理或 DNS 支持 IPv6，不等于已实现 IPv6 媒体。仅 IPv6 用户应验证兼容的中继/代理通道，或使用 WSS。 |

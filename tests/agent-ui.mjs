@@ -95,7 +95,7 @@ try {
   page.on('pageerror',error=>errors.push(String(error)));
   await page.goto(origin);
   await page.waitForFunction(()=>document.querySelector('.page-status').textContent==='在线'&&document.querySelector('.phone').dataset.iceMode==='relay');
-  await page.waitForTimeout(100);
+  await page.waitForTimeout(100);await page.evaluate(()=>window.__paintFrame());
   const draft=page.getByRole('textbox',{name:'待填写文字（网页草稿）',exact:true});
   assert.equal(await page.locator('.screen-proxy,.sync-toggle,.rebind').count(),0);
   assert.equal(await draft.inputValue(),'');

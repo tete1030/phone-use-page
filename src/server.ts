@@ -15,6 +15,7 @@ import { ConsoleError } from './types.js';
 import { render,readAssetVersion } from './ui.js';
 import { apiMethods,SDK_VERSION } from './sdk.js';
 import { PageConnections,type PageConnection } from './page-connections.js';
+import {TouchControl} from './touch-control.js';
 import { AuthStore,configuredPassword } from './auth.js';
 import { installAuth } from './auth-http.js';
 import { WebRtcVideo,rtcConfig } from './webrtc.js';
@@ -125,11 +126,16 @@ app.get(endpoint('/ws/events'),{websocket:true},(ws,req)=>{
 installWssVideoRoute(app,endpoint,{session,originAllowed,pages,rtc,video:device.video,serialize:serialized,parallel:rtc});
 app.get(endpoint('/ws/control'),{websocket:true},(ws,req)=>{
   let s:ReturnType<typeof session>;try{s=session(req);if(!originAllowed(req.headers.origin,req.headers.host))throw new Error();pages.attach(s.connection,ws);}catch{ws.close(1008);return;}
-  controls.set(s.owner,ws);let tail=Promise.resolve(),inputEpoch=0;
+  const touch=new TouchControl(device,s.owner,data=>{if(ws.readyState===1)ws.send(JSON.stringify(data));},Date.now,()=>{if(controls.get(s.owner)!==ws||ws.readyState!==1)throw new ConsoleError('CONTROL_REPLACED','控制通道已更换，旧手势未重放',409);});
+  const previous=controls.get(s.owner) as typeof ws|undefined;if(previous&&previous!==ws)previous.close(4001,'CONTROL_REPLACED');controls.set(s.owner,ws);let tail=Promise.resolve(),inputEpoch=0;
   ws.on('message',data=>{try{pages.requireOwner(s.owner);}catch{ws.close(4001,'PAGE_REPLACED');return;}let p:any;try{p=JSON.parse(String(data));}catch{ws.close(1003,'Invalid JSON');return;}
     if(pages.idle(s.owner)){disconnect(s.connection,'IDLE_TIMEOUT');return;}
     if(p.type==='heartbeat'){pages.heartbeat(s.owner);device.heartbeat(s.owner);return;}
-    if(p.type==='release'){inputEpoch++;if(device.owner===s.owner&&!device.activeTask)void device.video.release().catch(()=>{});return;}
+    if(p.type==='keys-release'){if(device.owner===s.owner&&!device.activeTask)void device.video.releaseKeys().catch(()=>{});return;}
+    if(p.type==='touch-keepalive'){if(typeof p.gesture==='string')touch.keepalive(p.gesture);return;}
+    if(p.type==='touch-cancel'){void touch.cancel(typeof p.gesture==='string'?p.gesture:undefined);return;}
+    if((p.type==='touch'||p.type==='touch-move')&&p.gesture){pages.activity(s.owner);touch.receive(p);if(p.type==='touch')audit.record({at:new Date().toISOString(),method:'EVENT',path:'/ws/control',status:200,ip:req.ip,client:String(req.headers['user-agent']||'').slice(0,300),owner:s.owner,action:p.action===0?'touch-down':'touch-up',verification:'not_verified'});return;}
+    if(p.type==='release'){inputEpoch++;void touch.cancel();if(device.owner===s.owner&&!device.activeTask)void device.video.release().catch(()=>{});return;}
     pages.activity(s.owner);const epoch=inputEpoch;tail=tail.then(()=>device.enqueue(s.owner,async()=>{
     if(epoch!==inputEpoch||ws.readyState!==1||controls.get(s.owner)!==ws)throw new ConsoleError('CONTROL_REPLACED','控制连接或输入焦点已更新，旧事件未重放',409);
     if(!device.state.controlAvailable)throw new ConsoleError('NO_CONTROL','设备未允许事件注入',503);
@@ -139,7 +145,7 @@ app.get(endpoint('/ws/control'),{websocket:true},(ws,req)=>{
     if(p.kind!=='move')audit.record({at:new Date().toISOString(),method:'EVENT',path:'/ws/control',status:200,ip:req.ip,client:String(req.headers['user-agent']||'').slice(0,300),owner:s.owner,requestId:typeof p.request==='string'?p.request.slice(0,64):undefined,action:p.type,verification:'not_verified'});
     if(ws.readyState===1)ws.send(JSON.stringify({type:'ack',kind:p.kind,request:p.request,execution:'sent',verification:'not_verified',backend:device.video.keyboardBackend}));
   })).catch(error=>{if(ws.readyState===1)ws.send(JSON.stringify({type:'error',message:String(error)}));});});
-  ws.once('close',()=>{inputEpoch++;if(controls.get(s.owner)===ws){controls.delete(s.owner);if(!device.activeTask)void device.release(s.owner).catch(()=>{});}});
+  ws.once('close',()=>{inputEpoch++;void touch.close().catch(()=>{});if(controls.get(s.owner)===ws){controls.delete(s.owner);if(!device.activeTask)void device.release(s.owner).catch(()=>{});}});
 });
 function publicTask(t:any,owner:string){const {owner:taskOwner,code,...rest}=t;return {...rest,canStop:taskOwner===owner,code:taskOwner===owner?code:undefined};}
 function escape(s:string){return s.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;');}

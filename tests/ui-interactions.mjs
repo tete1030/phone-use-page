@@ -46,7 +46,7 @@ try {
     class FixtureSocket {
       readyState=1;
       constructor(url){this.url=url;window.__sockets.push(this);setTimeout(()=>this.onopen?.({}),0);}
-      send(value){if(this.url.includes('/ws/control'))window.__messages.push(JSON.parse(value));}
+      send(value){if(this.url.includes('/ws/control')){const data=JSON.parse(value);window.__messages.push(data);if(data.gesture&&(data.type==='touch'||data.type==='touch-move')&&!window.__ackDisabled)setTimeout(()=>this.onmessage?.({data:JSON.stringify({type:'ack',gesture:data.gesture,seq:data.seq+(data.points?.length||1)-1,samples:data.points?.length||1,queueMs:0})}),0);}}
       close(){this.readyState=3;}
     }
     window.WebSocket=FixtureSocket;
@@ -79,10 +79,11 @@ try {
   await page.goto(origin);
   await page.waitForFunction(()=>document.querySelector('.page-status').textContent==='在线'&&document.querySelector('.phone').dataset.iceMode==='relay');
   await page.waitForTimeout(100);
+  await page.evaluate(()=>window.__paintFrame());await page.waitForFunction(()=>document.querySelector('.phone').dataset.videoFreshness==='current');
   const rectangle=await page.locator('.video-canvas').boundingBox();
   const center={x:rectangle.x+rectangle.width/2,y:rectangle.y+rectangle.height/2};
   const reset=()=>page.evaluate(()=>window.__messages=[]);
-  const touches=()=>page.evaluate(()=>window.__messages.filter(x=>x.type==='touch'));
+  const touches=()=>page.evaluate(()=>window.__messages.flatMap(x=>x.type==='touch-move'?x.points.map((p,i)=>({...x,...p,action:2,seq:x.seq+i})):x.type==='touch'?[x]:[]));
   async function drag(name,end){
     await reset();await page.mouse.move(center.x,center.y);await page.mouse.down();
     await page.mouse.move(end.x,end.y,{steps:3});await page.mouse.up();
@@ -110,8 +111,8 @@ try {
   await reset();await page.mouse.move(center.x,center.y);await page.mouse.down();
   await page.evaluate(()=>document.querySelector('.phone').releasePointerCapture(1));
   await page.mouse.move(right.x,right.y);await page.mouse.up();
-  assert.equal((await touches()).filter(x=>x.action===1).length,1);
-  checks.push({name:'unexpected capture loss releases touch'});
+  assert.equal(await page.evaluate(()=>window.__messages.filter(x=>x.type==='touch-cancel'||x.type==='touch'&&x.action===1).length),1);
+  checks.push({name:'capture loss finishes or cancels exactly once'});
 
   await reset();await page.mouse.move(center.x,center.y);await page.mouse.down();
   await page.evaluate(()=>document.dispatchEvent(new PointerEvent('pointerup',{pointerId:999,clientX:0,clientY:0,bubbles:true})));
@@ -122,24 +123,47 @@ try {
   await reset();await page.mouse.down();
   await page.evaluate(()=>window.dispatchEvent(new Event('blur')));
   await page.mouse.up();await page.waitForTimeout(40);
-  assert.equal((await touches()).filter(x=>x.action===1).length,1);
-  assert.ok(await page.evaluate(()=>window.__messages.some(x=>x.type==='release')));
+  assert.equal(await page.evaluate(()=>window.__messages.filter(x=>x.type==='touch-cancel').length),1);
+  assert.ok(await page.evaluate(()=>window.__messages.some(x=>x.type==='keys-release')));
   checks.push({name:'window blur releases touch exactly once'});
 
-  await page.locator('.advanced-input summary').click();
-  await page.locator('[data-mode=hold]').click();
-  await reset();await page.mouse.move(center.x,center.y);await page.mouse.down();await page.mouse.up();
-  assert.equal((await touches()).at(-1).action,0);
-  await page.waitForTimeout(750);assert.equal((await touches()).at(-1).action,1);
-  checks.push({name:'short click in long-press mode retains hold duration'});
-
-  await page.locator('[data-mode=click]').click();await reset();
-  await page.mouse.move(center.x,center.y);await page.mouse.down();
+  await reset();await page.mouse.move(center.x,center.y);await page.mouse.down();
+  assert.equal((await touches())[0].action,0);await page.waitForTimeout(750);assert.equal((await touches()).at(-1).action,0);
+  await page.mouse.up();assert.equal((await touches()).at(-1).action,1);
+  checks.push({name:'real long press follows physical down/up without a mode'});
+  await reset();await page.mouse.move(center.x,center.y);await page.mouse.down();
   await page.evaluate(()=>document.dispatchEvent(new PointerEvent('pointercancel',{pointerId:1,bubbles:true})));
-  await page.mouse.up();assert.equal((await touches()).filter(x=>x.action===1).length,1);
-  checks.push({name:'pointer cancellation releases touch'});
+  await page.mouse.up();assert.equal(await page.evaluate(()=>window.__messages.filter(x=>x.type==='touch-cancel').length),1);
+  checks.push({name:'pointer cancellation cancels gesture'});
 
   await drag('next gesture after cancellation',right);
+
+  await page.locator('.code-input').focus();await reset();await page.mouse.move(center.x,center.y);await page.mouse.down();
+  assert.equal((await touches())[0].action,0);await page.locator('.code-input').focus();await page.waitForTimeout(20);
+  assert.equal(await page.evaluate(()=>window.__messages.some(m=>m.type==='touch-cancel')),false);
+  await page.mouse.move(center.x+25,center.y+25);await page.mouse.up();assert.equal((await touches()).at(-1).action,1);
+  checks.push({name:'first DOWN is immediate and editor focus cannot cancel a drag'});
+  await reset();await page.evaluate(({x,y})=>{
+    document.querySelector('.phone').dispatchEvent(new PointerEvent('pointerdown',{pointerId:777,pointerType:'mouse',button:0,clientX:x,clientY:y,bubbles:true}));
+    for(const [dx,dy]of [[30,0],[30,30],[0,30]])document.dispatchEvent(new PointerEvent('pointermove',{pointerId:777,pointerType:'mouse',clientX:x+dx,clientY:y+dy,bubbles:true}));
+    document.dispatchEvent(new PointerEvent('pointerup',{pointerId:777,pointerType:'mouse',clientX:x,clientY:y+30,bubbles:true}));
+  },{x:center.x,y:center.y});
+  const curve=await touches();assert.deepEqual(curve.map(m=>m.action),[0,2,2,2,1]);assert.ok(curve[1].x>curve[0].x);assert.equal(curve[2].x,curve[1].x);assert.equal(curve[3].x,curve[0].x);
+  assert.deepEqual(curve.map(m=>m.seq),[0,1,2,3,4]);checks.push({name:'same-frame curve preserves every corner and ordered sequence'});
+  await reset();await page.evaluate(({x,y})=>{
+    const phone=document.querySelector('.phone');phone.dispatchEvent(new PointerEvent('pointerdown',{pointerId:778,pointerType:'mouse',button:0,clientX:x,clientY:y,bubbles:true}));
+    document.dispatchEvent(new PointerEvent('pointerup',{pointerId:778,pointerType:'mouse',clientX:x+1,clientY:y,bubbles:true}));
+  },{x:center.x,y:center.y});assert.deepEqual((await touches()).map(m=>m.action),[0,2,1]);checks.push({name:'one-pixel rapid drag preserves final MOVE before UP'});
+
+  await reset();await page.evaluate(({x,y})=>{
+    document.querySelector('.phone').dispatchEvent(new PointerEvent('pointerdown',{pointerId:779,pointerType:'mouse',button:0,clientX:x,clientY:y,bubbles:true}));
+    const samples=[new PointerEvent('pointermove',{clientX:x+10,clientY:y}),new PointerEvent('pointermove',{clientX:x+10,clientY:y+10}),new PointerEvent('pointermove',{clientX:x,clientY:y+10})];
+    const event=new PointerEvent('pointermove',{pointerId:779,clientX:x,clientY:y+10,bubbles:true});Object.defineProperty(event,'getCoalescedEvents',{value:()=>samples});document.dispatchEvent(event);
+    document.dispatchEvent(new PointerEvent('pointerup',{pointerId:779,clientX:x,clientY:y+10,bubbles:true}));
+  },{x:center.x,y:center.y});assert.equal((await touches()).filter(m=>m.action===2).length,3);checks.push({name:'browser-coalesced history keeps all available samples'});
+  await reset();await page.evaluate(()=>window.__ackDisabled=true);await page.mouse.move(center.x,center.y);await page.mouse.down();await page.waitForTimeout(2300);
+  assert.equal(await page.evaluate(()=>window.__messages.filter(m=>m.type==='touch-cancel').length),1);await page.mouse.up();await page.evaluate(()=>window.__ackDisabled=false);
+  checks.push({name:'missing acknowledgements cancel gesture without replay'});
 
   await page.locator('.video-network summary').click();
   await page.waitForFunction(()=>document.querySelector('.video-network-data').textContent.includes('"fixture": true'));
@@ -189,6 +213,32 @@ try {
   const panel=await page.locator('.video-network-panel').boundingBox();
   assert.ok(panel.height<=300&&panel.x>=0&&panel.y>=0&&panel.x+panel.width<=1919);
   assert.deepEqual(errors,[]);
+  for(const viewport of [{width:390,height:844},{width:844,height:390},{width:360,height:640}]){
+    await page.setViewportSize(viewport);await page.waitForTimeout(100);await page.evaluate(()=>window.__paintFrame());
+    assert.equal(await page.locator('.right-shell').isVisible(),false);assert.equal(await page.locator('.mobile-header').isVisible(),true);
+    const box=await page.locator('.phone').boundingBox();assert.ok(box.x>=0&&box.y>=0&&box.x+box.width<=viewport.width&&box.y+box.height<=viewport.height);
+    assert.ok(box.width>100&&box.height>200);await page.screenshot({path:'.local/mobile-'+viewport.width+'x'+viewport.height+'.png'});
+    await page.locator('.mobile-tools').click();assert.equal(await page.locator('.right-shell').isVisible(),true);assert.equal(await page.locator('.phone-pane').evaluate(n=>n.inert),true);
+    await page.locator('.mobile-tools-close').click();assert.equal(await page.locator('.right-shell').isVisible(),false);
+  }
+  await page.setViewportSize({width:390,height:844});await page.waitForTimeout(100);await page.evaluate(()=>window.__paintFrame());
+  const cdp=await context.newCDPSession(page),box=await page.locator('.video-canvas').boundingBox(),tx=box.x+box.width/2,ty=box.y+box.height/2;
+  await reset();await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:tx,y:ty,id:1}]});
+  await cdp.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x:tx+20,y:ty+30,id:1}]});await cdp.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
+  const finger=await touches();assert.equal(finger[0].action,0);assert.ok(finger.some(m=>m.action===2));assert.equal(finger.at(-1).action,1);
+  assert.equal(await page.evaluate(()=>scrollY),0);checks.push({name:'native touch drag operates remote screen without scrolling mobile page'});
+  await reset();await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:tx-20,y:ty,id:1}]});
+  await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:tx-20,y:ty,id:1},{x:tx+20,y:ty,id:2}]});
+  await cdp.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x:tx-35,y:ty,id:1},{x:tx+35,y:ty,id:2}]});
+  await cdp.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});const pinch=await touches();
+  assert.deepEqual([...new Set(pinch.filter(p=>p.action===0).map(p=>p.id))].sort(),[10,11]);assert.equal(pinch.filter(p=>p.action===1).length,2);
+  checks.push({name:'native two-finger pinch keeps independent DOWN and UP events'});
+  await page.evaluate(()=>{document.querySelector('.phone-pane').requestFullscreen=async()=>{throw Error('Fullscreen unavailable');};});
+  await page.locator('.mobile-immersive').click();assert.equal(await page.locator('.close-enlarge').isVisible(),true);await page.evaluate(()=>window.__paintFrame());
+  await reset();const immersed=await page.locator('.video-canvas').boundingBox();await page.mouse.move(immersed.x+immersed.width/2,immersed.y+immersed.height/2);await page.mouse.down();await page.mouse.move(immersed.x+immersed.width/2+10,immersed.y+immersed.height/2+10);await page.mouse.up();
+  assert.equal((await touches())[0].action,0);assert.equal((await touches()).at(-1).action,1);await page.locator('.close-enlarge').click();
+  checks.push({name:'mobile layouts fit portrait/landscape and immersive fallback retains touch layer'});
+  await page.setViewportSize({width:1919,height:998});await page.waitForTimeout(100);assert.equal(await page.locator('.right-shell').isVisible(),true);
   await mkdir('.local/ui-interactions',{recursive:true});
   await page.screenshot({path:'.local/ui-interactions/layout.png'});
   for(const [mode,timedOut]of [['gather-timeout',true],['gather-empty',false]]){

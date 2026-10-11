@@ -58,7 +58,7 @@ export class Video extends EventEmitter {
     client.exited.then(() => {if(this.client===client){this.client=undefined;this.hardware=undefined;this.keyboardBackend='unavailable';this.config=undefined;this.emit('status','scrcpy connection closed');for(const ws of this.viewers)ws.close(1012,'Device stream closed');}}).catch(()=>{});
     const video = await client.videoStream;
     this.width=video.width;this.height=video.height;this.codec=video.metadata.codec;
-    video.sizeChanged(size=>{this.width=size.width;this.height=size.height;this.sendMetadata();});
+    video.sizeChanged(size=>{this.width=size.width;this.height=size.height;void this.releaseTouches().catch(()=>{});this.sendMetadata();});
     this.sendMetadata();this.emit('status',null);
     void this.consume(video.stream);
   }
@@ -101,10 +101,11 @@ export class Video extends EventEmitter {
     if(!this.paused&&!this.wssEncoder)await this.client?.controller?.resetVideo();
   }
   private write(fn:()=>Promise<void>) {const work=this.writeTail.then(fn,fn);this.writeTail=work.catch(()=>{});return work;}
-  async touch(action:number,id:bigint,x:number,y:number,width=this.width,height=this.height) {
+  async touch(action:number,id:bigint,x:number,y:number,width=this.width,height=this.height,beforeSend?:()=>void) {
     if(![0,1,2].includes(action)||!Number.isFinite(x)||!Number.isFinite(y)||x<0||y<0||x>=width||y>=height)throw new ConsoleError('INVALID_TOUCH','触摸坐标或动作无效');
     await this.write(async()=>{
-      if(width!==this.width||height!==this.height)throw new ConsoleError('STALE_FRAME','视频尺寸已变化，请重新观察');
+      beforeSend?.();
+      if(width!==this.width||height!==this.height){await this.releaseTouchesNow();throw new ConsoleError('STALE_FRAME','视频尺寸已变化，触摸已释放，请重新观察');}
       const controller=this.client?.controller;if(!controller)throw new ConsoleError('NO_CONTROL','设备控制通道不可用',503);
       if(action===0&&this.touchPoints.size>=2&&!this.touchPoints.has(id))throw new ConsoleError('TOUCH_LIMIT','最多同时支持两指');
       if(action!==0&&!this.touchPoints.has(id))return;
@@ -120,8 +121,14 @@ export class Video extends EventEmitter {
   async panel(kind:'notifications'|'settings'){const controller=this.client?.controller;if(!controller)throw new ConsoleError('NO_CONTROL','控制通道不可用',503);await this.write(()=>kind==='notifications'?controller.expandNotificationPanel():controller.expandSettingPanel());}
   async press(keyCode:number,metaState=0){await this.key(0,keyCode,metaState);await this.key(1,keyCode,metaState);}
   async text(text:string){if(!this.client?.controller)throw new ConsoleError('NO_CONTROL','设备文字通道不可用',503);await this.write(()=>this.client!.controller!.injectText(text));}
+  private async releaseTouchesNow(){const controller=this.client?.controller;
+    try{if(controller)for(const [id,p]of this.touchPoints)await controller.injectTouch({action:1,pointerId:id,pointerX:Math.max(0,Math.min(this.width-1,Math.round(p.x))),pointerY:Math.max(0,Math.min(this.height-1,Math.round(p.y))),videoWidth:this.width,videoHeight:this.height,pressure:0,actionButton:0,buttons:0});}
+    finally{this.touchPoints.clear();}
+  }
+  async releaseTouches(){await this.write(()=>this.releaseTouchesNow());}
+  async releaseKeys(){await this.write(async()=>{try{await this.hardware?.release();const controller=this.client?.controller;if(controller)for(const code of this.pressed)await controller.injectKeyCode({action:1,keyCode:code as AndroidKeyCode,metaState:0,repeat:0});}finally{this.pressed.clear();}});}
   async release() {
-    await this.write(async()=>{const controller=this.client?.controller;try{await this.hardware?.release();if(controller){for(const [id,p]of this.touchPoints)await controller.injectTouch({action:1,pointerId:id,pointerX:Math.round(p.x),pointerY:Math.round(p.y),videoWidth:this.width,videoHeight:this.height,pressure:0,actionButton:0,buttons:0});for(const code of this.pressed)await controller.injectKeyCode({action:1,keyCode:code as AndroidKeyCode,metaState:0,repeat:0});}}finally{this.touchPoints.clear();this.pressed.clear();}});
+    await this.releaseTouches();await this.releaseKeys();
   }
   async close(){await this.release().catch(()=>{});await this.hardware?.close().catch(()=>{});this.hardware=undefined;const old=this.client;this.client=undefined;try{await old?.close();}catch{}this.closeViewers('Device disconnected');}
 }

@@ -54,6 +54,6 @@ export function createVideoManager(options:{providers:VideoTransport[];container
     })();return handle;
   };
   race=new VideoRace(options.providers,{create:factory,selected:slot=>{for(const element of options.container.querySelectorAll<HTMLElement>('.video-candidate'))element.style.zIndex='0';if(slot?.handle){slot.handle.surface.style.zIndex='1';void options.request('/api/video/select',{attemptId:slot.id}).catch(()=>{});}options.selected(slot);},changed:options.changed});
-  return {start:(mode:VideoMode)=>race.start(mode),stop:()=>race.stop(),pauseChanged:()=>race.pauseChanged(),active:()=>race.active,
+  return {start:(mode:VideoMode)=>race.start(mode),stop:()=>race.stop(),holdSelection:(held:boolean)=>race.holdSelection(held),pauseChanged:()=>race.pauseChanged(),active:()=>race.active,
     snapshot:()=>({...race.snapshot(),history:[...history],current:race.active?.handle?.snapshot()||null})};
 }

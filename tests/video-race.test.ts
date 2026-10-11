@@ -22,6 +22,11 @@ test('failed higher probes use backoff while keeping lower video, and stale call
   assert.equal(f.race.active?.provider,'wss');assert.equal(f.timers.at(-1)?.delay,5000);home.ready();assert.equal(f.race.active?.provider,'wss');f.race.stop();assert.ok(f.timers.every(t=>t.cancelled));});
 test('credential renewal keeps old media until replacement is ready',()=>{const f=raceFixture();f.race.start('coturn');const old=f.last('coturn');old.ready();f.race.refresh('coturn');assert.equal(old.closed,false);
   f.last('coturn').ready();assert.equal(old.closed,true);assert.equal(f.race.active?.provider,'coturn');f.race.stop();});
+test('a held gesture defers promotion until release and still cancels a failed active path',()=>{
+  const f=raceFixture();f.race.start();f.last('wss').ready();f.race.holdSelection(true);f.last('cloudflare').ready();f.last('coturn').ready();
+  assert.equal(f.race.active?.provider,'wss');assert.equal(f.last('wss').closed,false);f.race.holdSelection(false);assert.equal(f.race.active?.provider,'coturn');
+  f.race.holdSelection(true);f.last('coturn').failed('lost');assert.equal(f.race.active,undefined);f.race.holdSelection(false);f.race.stop();
+});
 
 function backend(){let issued=0,revoked=0;const config=rtcConfig({WEBRTC_TURN_PROVIDER:'coturn',COTURN_KEY_FILE:'home',COTURN_URL:'turns:home.example.com:8443?transport=tcp',WEBRTC_TURN_FALLBACK:'cloudflare',CF_TURN_KEY_FILE:'cloud',WEBRTC_TURN_TTL_SECONDS:'600',VIDEO_WSS_FALLBACK:'1'});
   const home=new TurnCredentials(config.turn,config.stunUrl,{secret:'a'.repeat(64)}),cloud=new TurnCredentials(config.fallbackTurn!,config.stunUrl,{keyId:'b'.repeat(32),apiToken:'c'.repeat(64)},async url=>{

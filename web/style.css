@@ -247,7 +247,7 @@ body{background:#f5f7fc}
 #android-observable .connection-note{top:38px;left:0;right:0}
 #android-observable .phone-pane.enlarged{position:fixed;inset:0;z-index:20;padding:7px;background:#edf2f9;grid-template-rows:minmax(0,1fr) 34px}
 #android-observable .phone-pane.enlarged .phone-stage{width:100%;height:100%}
-#android-observable .phone-pane.enlarged .phone-stage{overflow:auto;align-items:flex-start}
+#android-observable .phone-pane.enlarged .phone-stage{overflow:hidden;align-items:center}
 #android-observable .phone-pane.enlarged .phone{flex-shrink:0;margin:4px auto}
 #android-observable .close-enlarge{display:none}
 #android-observable .phone-pane.enlarged .close-enlarge{display:block;position:fixed;right:15px;top:15px;z-index:22}
@@ -281,3 +281,48 @@ body{background:#f5f7fc}
 #android-observable .text-target{min-width:0;flex:1;font:inherit;color:var(--as-text);background:var(--as-panel);border:1px solid var(--as-line)}
 #android-observable .text-target-status,#android-observable .text-status{font-size:10px;padding:0 6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #android-observable .clipboard-command{display:flex;gap:5px;padding:5px 0}
+
+#android-observable .phone-pane,#android-observable .phone-stage,#android-observable .phone{min-width:0}
+#android-observable .phone{-webkit-touch-callout:none;flex-shrink:0}
+#android-observable .mobile-header,#android-observable .mobile-tools,#android-observable .mobile-tools-close{display:none}
+#android-observable .phone-pane.enlarged{inset:0;padding:max(8px,env(safe-area-inset-top)) max(8px,env(safe-area-inset-right)) max(8px,env(safe-area-inset-bottom)) max(8px,env(safe-area-inset-left));grid-template-rows:36px minmax(0,1fr) 48px;box-sizing:border-box}
+#android-observable .phone-pane.enlarged .mobile-header{display:flex;align-items:center;padding-right:105px;font-size:13px}
+#android-observable .phone-pane.enlarged .mobile-immersive,#android-observable .phone-pane.enlarged .mobile-reconnect{display:none}
+#android-observable .phone-pane.enlarged .close-enlarge{top:max(8px,env(safe-area-inset-top));right:max(8px,env(safe-area-inset-right));min-height:36px;font:inherit;border:1px solid var(--as-line);background:var(--as-panel);color:var(--as-text)}
+#android-observable .phone-pane.enlarged .nav button{min-height:44px;font-size:13px}
+
+@media (max-width:900px),(pointer:coarse) and (max-height:600px){
+  #android-observable .app{grid-template-columns:minmax(0,1fr);padding:0;gap:0}
+  #android-observable .phone-pane{height:100%;grid-template-rows:44px minmax(0,1fr) 56px;gap:0;padding:env(safe-area-inset-top) max(6px,env(safe-area-inset-right)) env(safe-area-inset-bottom) max(6px,env(safe-area-inset-left));box-sizing:border-box;background:var(--as-soft)}
+  #android-observable .mobile-header{display:flex;align-items:center;gap:8px;padding:4px 2px;min-width:0;font-size:13px}
+  #android-observable .mobile-status{flex:1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+  #android-observable .mobile-header button{min-height:36px;padding:4px 8px;border:1px solid var(--as-line);background:var(--as-panel);color:var(--as-text);border-radius:4px;font:inherit}
+  #android-observable .phone-stage{overflow:hidden;min-width:0;min-height:0}
+  #android-observable .nav{display:flex;gap:4px;padding:4px 0;align-items:stretch}
+  #android-observable .nav button{flex:1;min-width:0;min-height:44px;font-size:12px;padding:3px;border-radius:4px}
+  #android-observable .nav [data-panel]{display:none}
+  #android-observable .mobile-tools{display:block}
+  #android-observable .right-shell{display:none}
+  #android-observable .app.tools-open .right-shell{display:grid;position:fixed;inset:calc(52px + env(safe-area-inset-top)) 0 0;z-index:40;grid-template-rows:auto auto minmax(0,1fr);gap:6px;padding:6px max(8px,env(safe-area-inset-right)) max(8px,env(safe-area-inset-bottom)) max(8px,env(safe-area-inset-left));background:var(--as-bg);box-sizing:border-box;overflow:hidden}
+  #android-observable .app.tools-open .mobile-tools-close{display:block;position:fixed;top:max(6px,env(safe-area-inset-top));left:8px;right:8px;z-index:45;min-height:40px;border:1px solid var(--as-line);border-radius:5px;background:var(--as-panel);color:var(--as-text);font:14px 'Noto Sans SC',sans-serif}
+  #android-observable .topbar{min-height:32px;flex-wrap:wrap;height:auto;padding:4px;font-size:12px}
+  #android-observable .phone-summary{display:none}
+  #android-observable .routing{display:flex;flex-direction:column;gap:4px;min-width:0;padding:5px;font-size:12px}
+  #android-observable .route-summary{display:none}
+  #android-observable .routing-help{font-size:11px;line-height:1.4}
+  #android-observable .routing .phone-caption{flex-wrap:wrap;gap:5px;min-height:32px}
+  #android-observable .phone-caption button{min-height:32px;font-size:12px}
+  #android-observable .video-modes{flex-wrap:wrap;gap:6px;font-size:12px}
+  #android-observable .video-modes span{display:none}
+  #android-observable .workspace{display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:auto auto auto;grid-template-areas:'applications' 'nodes' 'commands';gap:8px;overflow:auto;overscroll-behavior:contain;align-content:start}
+  #android-observable .applications-panel{min-height:450px}
+  #android-observable .applications-columns{grid-template-columns:minmax(0,1fr);grid-template-rows:130px 140px 140px}
+  #android-observable .nodes-pane{min-height:400px;max-height:60dvh}
+  #android-observable .commands{grid-template-rows:250px 330px 160px 36px;gap:8px;min-height:800px}
+  #android-observable input,#android-observable textarea,#android-observable select{font-size:16px}
+  #android-observable .text-toolbar button{min-height:34px;font-size:12px}
+  #android-observable .advanced-input[open]{max-height:65dvh}
+  #android-observable .routing .video-network-panel{top:auto;bottom:max(8px,env(safe-area-inset-bottom));left:8px;right:8px;width:auto;max-height:60dvh;z-index:50}
+  #android-observable .connection-note{position:static;font-size:12px;padding:5px}
+  #android-observable .phone-pane.enlarged{padding:env(safe-area-inset-top) max(6px,env(safe-area-inset-right)) env(safe-area-inset-bottom) max(6px,env(safe-area-inset-left));grid-template-rows:44px minmax(0,1fr) 56px}
+}
