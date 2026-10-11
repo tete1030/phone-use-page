@@ -336,6 +336,8 @@ docker compose --env-file .local/coturn.env -f examples/coturn/compose.yaml up -
 
 证书是符号链接时，还需挂载链接目标，或将完整文件导出到私有目录；只挂载指向卷外文件的 `live` 目录会失败。将导出/重载加入续期钩子。同步控制台和 TURN 主机时钟，确保短期 REST 凭据有效。无状态 REST 示例把本地 SQLite 缓存放在 `/tmp`；持久数据库用户需另配私有持久数据库。
 
+可选的[容器内 TURN 维护器](TURN_MAINTENANCE.md)可以检查证书并热更新 TLS、维护动态公网地址、管理有期限的诊断日志，替代宿主 cron。文档包含通用 Docker 示例、DockerMan 配置要点、与 NPM/Certbot 的窄范围证书挂载方式和回滚步骤；不要求特定网关或 NAS。
+
 ### 配置控制台
 
 原生 `.env`：

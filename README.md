@@ -37,6 +37,7 @@
 - [部署场景与配置示例](docs/DEPLOYMENT_SCENARIOS.md)：家宽 HTTPS 网关、自建 coturn、Cloudflare Tunnel/TURN、组合方案，以及逐项配置清单。
 - [主机与 ADB 配置](docs/HOST_SETUP.md)：操作系统工具、设备授权、USB/用户组、容器密钥和可选无线调试。
 - [完整安装部署手册](docs/SETUP.md)：从零操作步骤、升级、回滚和排障。
+- [自建 TURN 的证书与运行维护](docs/TURN_MAINTENANCE.md)：容器内维护器、证书热更新、NPM/Certbot 配合、诊断日志与回滚。
 - [配置参考](docs/CONFIGURATION.md)：变量含义、默认值及原生/容器路径映射。
 - [兼容性与运行要求](docs/PORTABILITY.md)：设备、平台、浏览器和网络条件，以及当前限制。
 - [已验证场景与排障经验](docs/VERIFIED_SCENARIOS.md)：脱敏历史记录，区分实机、外网反馈和模拟测试。

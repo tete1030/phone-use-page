@@ -1,0 +1,46 @@
+name: phone-use-page-turn
+services:
+  turn:
+    image: ${COTURN_SUPERVISOR_IMAGE:-phone-use-page-coturn-supervisor:local}
+    build:
+      context: ../../infra/coturn-supervisor
+    user: "${TURN_UID:?Set the config and certificate owner UID}:${TURN_GID:?Set the owner GID}"
+    restart: unless-stopped
+    network_mode: host
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 256m
+    pids_limit: 256
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=64m,mode=1777"]
+    environment:
+      TURN_CERT_SOURCE: /cert-source
+      TURN_CERT_HOSTNAME: ${TURN_CERT_HOSTNAME:?Set the certificate hostname}
+      TURN_PUBLIC_HOSTNAME: ${TURN_PUBLIC_HOSTNAME:-}
+      TURN_PRIVATE_IP: ${TURN_PRIVATE_IP:-}
+      TURN_CERT_INTERVAL_SECONDS: ${TURN_CERT_INTERVAL_SECONDS:-60}
+      TURN_IP_INTERVAL_SECONDS: ${TURN_IP_INTERVAL_SECONDS:-300}
+    volumes:
+      - type: bind
+        source: ${TURN_CONFIG_PATH:?Set the absolute path to the private base configuration}
+        target: /etc/coturn/base.conf
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${TURN_STATE_PATH:?Create a private writable state directory}
+        target: /var/lib/coturn-supervisor
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${TURN_CERT_SOURCE_DIR:?Set the certificate directory (see the symlink guidance)}
+        target: /cert-source
+        read_only: true
+        bind:
+          create_host_path: false
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
