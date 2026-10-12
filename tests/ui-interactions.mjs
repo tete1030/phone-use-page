@@ -79,6 +79,14 @@ try {
   await page.goto(origin);
   await page.waitForFunction(()=>document.querySelector('.page-status').textContent==='在线'&&document.querySelector('.phone').dataset.iceMode==='relay');
   await page.waitForTimeout(100);
+  // A connection can be selected while locked, before any decoded frame arrives.
+  await page.evaluate(()=>{for(const s of window.__sockets)if(s.url.includes('/ws/events'))s.onmessage?.({data:JSON.stringify({type:'power',screenOn:false,locked:true,powerCollectedAt:Date.now()})});});
+  await page.waitForFunction(()=>document.querySelector('.phone').dataset.videoConnection==='connected');
+  await page.evaluate(()=>{for(const s of window.__sockets)if(s.url.includes('/ws/events'))s.onmessage?.({data:JSON.stringify({type:'power',screenOn:true,locked:false,powerCollectedAt:Date.now()})});window.__messages=[];});
+  assert.equal(await page.locator('.phone').getAttribute('data-video-freshness'),'waiting');
+  await page.locator('.phone').click();await page.waitForTimeout(40);
+  assert.deepEqual(await page.evaluate(()=>window.__messages.filter(m=>m.type==='touch').map(m=>m.action)),[0,1],'unlocked phone receives touch before a new video frame');
+  checks.push({name:'unlock permits touch while waiting for the first video frame'});
   await page.evaluate(()=>window.__paintFrame());await page.waitForFunction(()=>document.querySelector('.phone').dataset.videoFreshness==='current');
   const rectangle=await page.locator('.video-canvas').boundingBox();
   const center={x:rectangle.x+rectangle.width/2,y:rectangle.y+rectangle.height/2};
@@ -202,6 +210,8 @@ try {
   await page.screenshot({path:'.local/freshness-paused.png'});
   await page.locator('.video-network summary').click();
   await power(true,false);
+  assert.equal(await page.locator('.phone').getAttribute('data-video-freshness'),'waiting');
+  await drag('resume permits touch while the displayed frame is old',right);
   assert.equal(await page.locator('.phone').getAttribute('data-video-freshness'),'waiting');
   await page.evaluate(()=>window.__paintFrame());
   assert.equal(await page.locator('.phone').getAttribute('data-video-freshness'),'current');

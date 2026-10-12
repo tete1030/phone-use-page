@@ -83,7 +83,19 @@ async function initialize() {
   const url=(path:string)=>{const u=new URL(endpoint(path),location.href);u.searchParams.set('page',boot.pageId);u.searchParams.set('connection',connectionId);return u.toString().replace(/^http/,'ws');};
   const viewUrl=(path:string)=>{const u=new URL(endpoint(path),location.href);u.searchParams.set('page',boot.pageId);u.searchParams.set('connection',connectionId);return u.pathname+u.search;};
   const interactive=()=>online&&!waking&&powerKnown()&&observation.screenOn&&observation.locked===false;
-  const touchReady=()=>interactive()&&control?.readyState===1&&observation.controlAvailable&&controlAllowed&&!taskBusy&&!appsBusy&&!textPending&&!!videoManager?.active()&&lastDisplayedFrameAt!==null&&lastDisplayedFrameAt>=frameRequiredAfter;
+  function touchBlockedReason(){
+    if(!online)return '本页已离线';
+    if(waking)return '正在唤醒并解锁';
+    if(!powerKnown())return '手机状态尚未确认';
+    if(!observation.screenOn||observation.locked!==false)return '手机息屏或锁屏';
+    if(control?.readyState!==1||!observation.controlAvailable)return '手机控制通道尚未就绪';
+    if(taskBusy||appsBusy||textPending||!controlAllowed)return '设备正在处理其他操作';
+    if(!videoManager?.active()||!Number.isFinite(meta.width)||!Number.isFinite(meta.height)||meta.width<=0||meta.height<=0)return '视频坐标尚未就绪';
+    return null;
+  }
+  // Frame freshness is a display warning, not an input gate: a still screen may
+  // need a touch before producing another frame after unlock.
+  const touchReady=()=>touchBlockedReason()===null;
   function fit(){if(touch?.active())touch.cancel('页面尺寸已变化，手势已释放');app.style.transform='none';root.style.width='100%';root.style.height=(visualViewport?.height||innerHeight)+'px';fitPhone();}
   addEventListener('resize',fit);addEventListener('orientationchange',fit);visualViewport?.addEventListener('resize',fit);
   function fitPhone(){if(touch?.active())return;const stage=q<HTMLElement>('.phone-stage');const ratio=meta.width&&meta.height?meta.width/meta.height:observation.width/observation.height;
@@ -190,7 +202,7 @@ async function initialize() {
   touch=installTouch({element:phone,geometry:()=>{const r=canvas.getBoundingClientRect(),ratio=meta.width/meta.height,w=Math.min(r.width,r.height*ratio),h=w/ratio;return {width:meta.width,height:meta.height,left:r.left+(r.width-w)/2,top:r.top+(r.height-h)/2,displayWidth:w,displayHeight:h};},
     canStart:touchReady,
     canContinue:()=>interactive()&&control?.readyState===1&&observation.controlAvailable&&!taskBusy&&!appsBusy&&!!videoManager?.active(),
-    unavailable:()=>{if(online&&powerKnown()&&(!observation.screenOn||observation.locked!==false)&&!waking)void wakePhone();else log(textPending||appsBusy||taskBusy?'设备正在处理其他操作，触摸未发送':'画面或控制尚未就绪，触摸未发送');},
+    unavailable:()=>{if(online&&powerKnown()&&(!observation.screenOn||observation.locked!==false)&&!waking)void wakePhone();else log((touchBlockedReason()||'触摸暂不可用')+'，触摸未发送');},
     send:message=>{if(control?.readyState!==1||(control.bufferedAmount||0)>131072)return false;control.send(JSON.stringify(message));return true;},
     changed:active=>{videoManager?.holdSelection(active);if(active)applications?.pause();else{if(online)applications?.resume();fitPhone();}renderPhone();inputAvailability();},point:showTouch,error:message=>{touchNotice=message;log(message);q('.mobile-status').setAttribute('title',message);renderPhone();setTimeout(()=>{touchNotice='';renderPhone();},5000);}});
   phone.addEventListener('click',event=>{if(online&&!interactive()&&!waking)void wakePhone();else if(interactive()&&controlAllowed&&!appsBusy&&event.detail===0&&!waking)void perform('/api/gesture',{kind:'tap',x:observation.width/2,y:observation.height/2}).catch(()=>{});});
@@ -294,7 +306,7 @@ async function initialize() {
   q('.video-network-copy').addEventListener('click',async()=>{const button=q<HTMLButtonElement>('.video-network-copy'),status=q('.video-network-copy-status'),value=q('.video-network-data').textContent||'';if(!value||value==='等待连接信息'){assign(status,'暂无诊断可复制');return;}button.disabled=true;assign(status,'正在复制');
     try{try{await navigator.clipboard.writeText(value);}catch{const previous=document.activeElement,field=document.createElement('textarea');field.value=value;field.readOnly=true;field.style.cssText='position:fixed;left:-9999px;top:0';document.body.append(field);field.select();try{if(!document.execCommand('copy'))throw new Error('Clipboard unavailable');}finally{field.remove();if(previous instanceof HTMLElement)previous.focus({preventScroll:true});}}assign(status,'已复制');}
     catch{assign(status,'复制失败，请手动选择诊断文本');}finally{button.disabled=false;}});
-  async function updateNetwork(){if(!network?.open||!online||networkLoading)return;const epoch=connectionEpoch;networkLoading=true;try{const server=await api('/api/webrtc/status');if(online&&epoch===connectionEpoch)q('.video-network-data').textContent=JSON.stringify({browser:{...(networkInfo as object||{}),state:phone.dataset.videoConnection,provider:videoProvider||null},server,input:touch?.snapshot()},null,2);}catch(error){if(online&&epoch===connectionEpoch)q('.video-network-data').textContent=String(error);}finally{networkLoading=false;}}
+  async function updateNetwork(){if(!network?.open||!online||networkLoading)return;const epoch=connectionEpoch;networkLoading=true;try{const server=await api('/api/webrtc/status');if(online&&epoch===connectionEpoch)q('.video-network-data').textContent=JSON.stringify({browser:{...(networkInfo as object||{}),state:phone.dataset.videoConnection,provider:videoProvider||null},server,input:{...touch?.snapshot(),ready:touchReady(),blockedReason:touchBlockedReason()}},null,2);}catch(error){if(online&&epoch===connectionEpoch)q('.video-network-data').textContent=String(error);}finally{networkLoading=false;}}
   network?.addEventListener('toggle',()=>void updateNetwork());
   setInterval(()=>{renderPhone();inputAvailability();if(online)void updateNetwork();},1000);
   let lastActivitySent=0;const activity=()=>{if(!online||Date.now()-lastActivitySent<3000)return;lastActivitySent=Date.now();void api('/api/activity',{}).catch(()=>{});};for(const name of ['pointerdown','keydown','input','wheel','change'])root.addEventListener(name,activity,{capture:true,passive:true});
