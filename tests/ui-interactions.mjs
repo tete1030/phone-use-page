@@ -72,6 +72,7 @@ try {
       if(path==='/api/connection/connect')data={connectionId:'fixture',generation:0};
       if(path==='/api/connection/resume'){if(window.__resumeStatus)return new Response(JSON.stringify({error:{code:window.__resumeCode||'SERVER_ERROR',message:'原连接已失效或被其他页面接管'}}),{status:window.__resumeStatus});data={connectionId:'fixture',generation:(window.__resumeGeneration=(window.__resumeGeneration||0)+1)};}
       if(path==='/api/app-state')data={collectedAt:Date.now(),catalog:{apps:[]},processes:[],navigation:{locked:false,current:null,tasks:[]}};
+      if(path==='/api/press')data=window.__pressResult||{};
       if(path==='/api/webrtc/config')data={provider:'coturn',availableProviders:['coturn'],iceTransportPolicy:'relay',iceServers:[{urls:'turns:fixture.invalid:8443?transport=tcp'}],renewAfterMs:null};
       if(path==='/api/webrtc/config'&&fixtureMode)data={...data,provider:'cloudflare',availableProviders:['cloudflare'],gatherMs:50};
       if(path==='/api/webrtc/offer'){window.__offers++;data={width:864,height:1920,sdp:''};}
@@ -283,6 +284,23 @@ try {
   assert.ok(panel.height<=300&&panel.x>=0&&panel.y>=0&&panel.x+panel.width<=1919);
   assert.deepEqual(errors,[]);
   await page.locator('.video-network').evaluate(n=>n.open=false);
+  await page.evaluate(()=>window.__pressResult={status:'ok',result:{longValue:'long-component-identifier/'.repeat(100)}});
+  await page.locator('.nav [data-press="HOME"]').click();await page.locator('.results .log-line').first().locator('summary').click();
+  const logGeometry=await page.locator('.results .log-line').first().evaluate(row=>{const time=row.querySelector('.log-time').getBoundingClientRect(),detail=row.querySelector('details').getBoundingClientRect(),pre=row.querySelector('pre').getBoundingClientRect();return {timeWidth:time.width,detailLeft:detail.left,timeRight:time.right,preRight:pre.right,rowRight:row.getBoundingClientRect().right};});
+  assert.ok(logGeometry.timeWidth<85&&logGeometry.detailLeft>=logGeometry.timeRight&&logGeometry.preRight<=logGeometry.rowRight+1);
+  await page.locator('.results .log-line').first().locator('summary').click();await page.evaluate(()=>window.__pressResult=null);
+  checks.push({name:'expanded technical JSON stays in the message column without widening timestamps'});
+  async function assertTextLayout(){const violations=await page.evaluate(()=>{
+    const rules=[['.navigation-limit','.applications-panel'],['.application-help','.applications-panel'],['.all-packages-label','.applications-panel'],['.text-help','.text-command'],['.text-status','.text-command'],['.script-note','.script-command'],['.view-help','.nodes-pane'],['.result-footer','.result-command']],errors=[];
+    for(const [selector,panelSelector]of rules)for(const element of document.querySelectorAll(selector)){
+      if(!element.getClientRects().length||element.closest('details:not([open])'))continue;const bounds=element.getBoundingClientRect(),panel=element.closest(panelSelector),panelBounds=panel.getBoundingClientRect();
+      let clipped=false;for(let ancestor=element.parentElement;ancestor&&ancestor!==panel;ancestor=ancestor.parentElement)if(['auto','scroll','hidden','clip'].includes(getComputedStyle(ancestor).overflowY)){clipped=true;break;}
+      if(!clipped&&(bounds.top<panelBounds.top-1||bounds.bottom>panelBounds.bottom+1))errors.push(selector+' escapes '+panelSelector);
+      const walker=document.createTreeWalker(element,NodeFilter.SHOW_TEXT);let node;while(node=walker.nextNode()){if(!node.textContent.trim())continue;const range=document.createRange();range.selectNodeContents(node);for(const rect of range.getClientRects())if(rect.height&&(rect.top<bounds.top-1||rect.bottom>bounds.bottom+1))errors.push(selector+' text exceeds its row');}
+    }
+    for(const time of document.querySelectorAll('.log-time')){const range=document.createRange();range.selectNodeContents(time);if([...range.getClientRects()].filter(r=>r.width).length>1)errors.push('timeline timestamp wraps');}
+    return errors;
+  });assert.deepEqual(violations,[],'wrapped text stays within its own panel');}
   for(const viewport of [{width:390,height:844},{width:844,height:390},{width:360,height:640},{width:1024,height:600},{width:1280,height:600},{width:1600,height:900}]){
     await page.setViewportSize(viewport);await page.waitForTimeout(100);await page.evaluate(()=>window.__paintFrame());
     const narrow=viewport.width<=600;assert.equal(await page.locator('.right-shell').isVisible(),!narrow);assert.equal(await page.locator('.mobile-header').isVisible(),narrow);
@@ -290,15 +308,17 @@ try {
     await page.locator('.workspace').evaluate(n=>n.scrollTop=0);
     assert.ok(box.width>100&&box.height>200);await page.screenshot({path:'.local/mobile-'+viewport.width+'x'+viewport.height+'.png'});
     if(narrow){assert.ok(box.height>viewport.height-80);await page.locator('.mobile-tools').click();assert.equal(await page.locator('.right-shell').isVisible(),true);assert.equal(await page.locator('.phone-pane').evaluate(n=>n.inert),true);
-      await page.locator('.mobile-tools-close').click();assert.equal(await page.locator('.right-shell').isVisible(),false);
+      await assertTextLayout();await page.locator('.mobile-tools-close').click();assert.equal(await page.locator('.right-shell').isVisible(),false);
     }else{
       assert.equal(await page.evaluate(()=>matchMedia('(pointer: coarse)').matches),true);assert.equal(await page.locator('.right-shell').evaluate(n=>n.inert),false);
       const toolsBox=await page.locator('.right-shell').boundingBox();assert.ok(toolsBox.x>=box.x+box.width&&toolsBox.x+toolsBox.width<=viewport.width);
       for(const name of ['.applications-panel','.nodes-pane','.commands'])assert.equal(await page.locator(name).isVisible(),true);
+      await assertTextLayout();
       if(viewport.height<=720){assert.equal(await page.locator('.workspace').evaluate(n=>n.scrollHeight>n.clientHeight),true);await page.locator('.run').scrollIntoViewIfNeeded();assert.equal(await page.locator('.run').isVisible(),true);}
     }
   }
   checks.push({name:'coarse pointer car and phone landscape keep tools visible; Muse-sized workbench stays complete'});
+  checks.push({name:'wrapped descriptions stay within panels and timestamps fit one line at every tested viewport'});
   await page.setViewportSize({width:390,height:844});await page.waitForTimeout(100);await page.evaluate(()=>window.__paintFrame());
   const cdp=await context.newCDPSession(page),box=await page.locator('.video-canvas').boundingBox(),tx=box.x+box.width/2,ty=box.y+box.height/2;
   const mobilePhoneBox=await page.locator('.phone').boundingBox(),bufferY=mobilePhoneBox.y+mobilePhoneBox.height+1;

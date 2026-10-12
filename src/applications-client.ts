@@ -23,7 +23,7 @@ export function installApplications(root:HTMLElement,options:{api:(path:string)=
   function render(){if(!state)return;const nav=state.navigation,current=nav.current,task=nav.tasks.find(t=>t.taskId===current?.taskId);
     assign(q('.application-current'),current?`当前任务 #${current.taskId} · ${current.component}`:'当前 Activity 未知');
     assign(q('.activity-stack'),task?.activities.length?task.activities.map(a=>`${a.index}: ${a.component} [${a.state}]`).join(' → '):'系统 Activity 层级未知');
-    assign(q('.applications-status'),error||`${new Date(state.collectedAt).toLocaleTimeString()} 更新 · ${nav.locked===true?'手机已锁屏，解锁后可操作':nav.locked===null?'正在确认手机状态':'应用列表自动更新'}`);
+    assign(q('.applications-status'),error||`${new Date(state.collectedAt).toLocaleTimeString('zh-CN',{hourCycle:'h23',hour:'2-digit',minute:'2-digit',second:'2-digit'})} 更新 · ${nav.locked===true?'手机已锁屏，解锁后可操作':nav.locked===null?'正在确认手机状态':'应用列表自动更新'}`);
     const search=query.trim().toLowerCase(),match=(value:string)=>!search||value.toLowerCase().includes(search);
     for(const mode of modes){
       const list=lists[mode]!,rows=columns.get(mode)!;
