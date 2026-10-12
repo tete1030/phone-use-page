@@ -29,7 +29,7 @@ let browser;
 const checks=[];
 try {
   browser=await chromium.launch({executablePath:process.env.CHROME_PATH||'/opt/google/chrome/chrome',headless:true,args:['--no-sandbox']});
-  const context=await browser.newContext({viewport:{width:1919,height:998},permissions:['clipboard-read','clipboard-write']});
+  const context=await browser.newContext({viewport:{width:1919,height:998},hasTouch:true,permissions:['clipboard-read','clipboard-write']});
   await context.addInitScript(()=>{
     const nativeTimeout=window.setTimeout;window.setTimeout=(fn,ms,...args)=>nativeTimeout(fn,window.__fastRecovery&&ms===60000?50:ms,...args);
     window.__messages=[];
@@ -282,14 +282,23 @@ try {
   const panel=await page.locator('.video-network-panel').boundingBox();
   assert.ok(panel.height<=300&&panel.x>=0&&panel.y>=0&&panel.x+panel.width<=1919);
   assert.deepEqual(errors,[]);
-  for(const viewport of [{width:390,height:844},{width:844,height:390},{width:360,height:640}]){
+  await page.locator('.video-network').evaluate(n=>n.open=false);
+  for(const viewport of [{width:390,height:844},{width:844,height:390},{width:360,height:640},{width:1024,height:600},{width:1280,height:600},{width:1600,height:900}]){
     await page.setViewportSize(viewport);await page.waitForTimeout(100);await page.evaluate(()=>window.__paintFrame());
-    assert.equal(await page.locator('.right-shell').isVisible(),false);assert.equal(await page.locator('.mobile-header').isVisible(),true);
+    const narrow=viewport.width<=600;assert.equal(await page.locator('.right-shell').isVisible(),!narrow);assert.equal(await page.locator('.mobile-header').isVisible(),narrow);
     const box=await page.locator('.phone').boundingBox();assert.ok(box.x>=0&&box.y>=0&&box.x+box.width<=viewport.width&&box.y+box.height<=viewport.height);
+    await page.locator('.workspace').evaluate(n=>n.scrollTop=0);
     assert.ok(box.width>100&&box.height>200);await page.screenshot({path:'.local/mobile-'+viewport.width+'x'+viewport.height+'.png'});
-    await page.locator('.mobile-tools').click();assert.equal(await page.locator('.right-shell').isVisible(),true);assert.equal(await page.locator('.phone-pane').evaluate(n=>n.inert),true);
-    await page.locator('.mobile-tools-close').click();assert.equal(await page.locator('.right-shell').isVisible(),false);
+    if(narrow){assert.ok(box.height>viewport.height-80);await page.locator('.mobile-tools').click();assert.equal(await page.locator('.right-shell').isVisible(),true);assert.equal(await page.locator('.phone-pane').evaluate(n=>n.inert),true);
+      await page.locator('.mobile-tools-close').click();assert.equal(await page.locator('.right-shell').isVisible(),false);
+    }else{
+      assert.equal(await page.evaluate(()=>matchMedia('(pointer: coarse)').matches),true);assert.equal(await page.locator('.right-shell').evaluate(n=>n.inert),false);
+      const toolsBox=await page.locator('.right-shell').boundingBox();assert.ok(toolsBox.x>=box.x+box.width&&toolsBox.x+toolsBox.width<=viewport.width);
+      for(const name of ['.applications-panel','.nodes-pane','.commands'])assert.equal(await page.locator(name).isVisible(),true);
+      if(viewport.height<=720){assert.equal(await page.locator('.workspace').evaluate(n=>n.scrollHeight>n.clientHeight),true);await page.locator('.run').scrollIntoViewIfNeeded();assert.equal(await page.locator('.run').isVisible(),true);}
+    }
   }
+  checks.push({name:'coarse pointer car and phone landscape keep tools visible; Muse-sized workbench stays complete'});
   await page.setViewportSize({width:390,height:844});await page.waitForTimeout(100);await page.evaluate(()=>window.__paintFrame());
   const cdp=await context.newCDPSession(page),box=await page.locator('.video-canvas').boundingBox(),tx=box.x+box.width/2,ty=box.y+box.height/2;
   const mobilePhoneBox=await page.locator('.phone').boundingBox(),bufferY=mobilePhoneBox.y+mobilePhoneBox.height+1;
@@ -311,6 +320,8 @@ try {
   checks.push({name:'native two-finger pinch keeps independent DOWN and UP events'});
   await page.evaluate(()=>{document.querySelector('.phone-pane').requestFullscreen=async()=>{throw Error('Fullscreen unavailable');};});
   await page.locator('.mobile-immersive').click();assert.equal(await page.locator('.close-enlarge').isVisible(),true);await page.evaluate(()=>window.__paintFrame());
+  const immersiveBox=await page.locator('.phone').boundingBox();assert.ok(immersiveBox.height>844-80);
+  assert.ok((await page.locator('.close-enlarge').boundingBox()).height<=28);assert.ok((await page.locator('.nav [data-press="HOME"]').boundingBox()).height<=32);
   await reset();const immersed=await page.locator('.video-canvas').boundingBox();await page.mouse.move(immersed.x+immersed.width/2,immersed.y+immersed.height/2);await page.mouse.down();await page.mouse.move(immersed.x+immersed.width/2+10,immersed.y+immersed.height/2+10);await page.mouse.up();
   assert.equal((await touches())[0].action,0);assert.equal((await touches()).at(-1).action,1);await page.locator('.close-enlarge').click();
   checks.push({name:'mobile layouts fit portrait/landscape and immersive fallback retains touch layer'});

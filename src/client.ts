@@ -29,13 +29,16 @@ async function initialize() {
   const workspace=q<HTMLElement>('.workspace'),phonePane=q('.phone-pane');app.prepend(phonePane);
   right.append(q('.topbar'),q('.routing'),q('.connection-note'),workspace);
   q('.routing').append(q('.phone-caption'),q('.video-modes'));
+  q('.phone-caption').append(...root.querySelectorAll('.nav [data-panel]'));
+  const recent=q('.nav [data-press="RECENTS"]');recent.textContent='任务';recent.setAttribute('aria-label','最近任务');recent.setAttribute('title','最近任务');
+  const wake=q('.wake');wake.textContent='唤醒';wake.setAttribute('aria-label','唤醒并解锁');wake.setAttribute('title','唤醒并解锁');
   const keyboardDetails=document.createElement('details');keyboardDetails.className='advanced-input';
   const summary=document.createElement('summary');summary.textContent='原始键盘与更多手势';keyboardDetails.append(summary);
   const keyboardPane=q('.keyboard-command');keyboardDetails.append(q('.capture-buttons'),keyboardPane,q('.clipboard-command'),q('.gesture-command'));q('.commands').style.position='relative';q('.commands').append(keyboardDetails);
   const process=q('[aria-label="检测到进程"]'),processDetails=document.createElement('details');processDetails.className='process-diagnostics';
   const processSummary=document.createElement('summary');processSummary.textContent='进程诊断（按需展开）';processDetails.append(processSummary,process);q('.applications-panel').append(processDetails);
   let touch:ReturnType<typeof installTouch>|null=null,toolsOpen=false,touchNotice='';
-  const mobile=matchMedia('(max-width: 900px), (pointer: coarse) and (max-height: 600px)');
+  const mobile=matchMedia('(max-width: 600px)');
   const closeZoom=document.createElement('button');closeZoom.className='close-enlarge';closeZoom.textContent='退出沉浸';closeZoom.addEventListener('click',()=>void exitImmersive());phonePane.append(closeZoom);
   const toolsClose=document.createElement('button');toolsClose.className='mobile-tools-close';toolsClose.textContent='返回手机画面';toolsClose.addEventListener('click',()=>setTools(false));app.append(toolsClose);
   function setTools(open:boolean){touch?.cancel();toolsOpen=open;app.classList.toggle('tools-open',open);q('.mobile-tools').setAttribute('aria-expanded',String(open));right.inert=phonePane.classList.contains('enlarged')||mobile.matches&&!open;phonePane.inert=mobile.matches&&open;
