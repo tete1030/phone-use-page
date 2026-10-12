@@ -1,6 +1,8 @@
 import {currentDraftTarget,focusedTextNode} from '../src/text-draft.js';
 import {TouchControl} from '../src/touch-control.js';
 import {randomUUID} from 'node:crypto';
+import {once} from 'node:events';
+import {WebSocket,WebSocketServer} from 'ws';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {fork} from 'node:child_process';
@@ -33,6 +35,41 @@ test('one owner cannot steal another live lease',()=>{const d=new Device('test',
 test('a newer page replaces all sockets even when the tabs share a cookie',()=>{const p=new PageConnections(),a=p.issue('same'),b=p.issue('same'),first=p.begin(a,'same').connection; p.complete(first);let closed=0;const ws={readyState:1,send:()=>{},once:()=>{},close:()=>{closed++;}} as any;p.attach(first,ws);const second=p.begin(b,'same').connection;assert.equal(first.abort.signal.aborted,true);assert.equal(closed,1);assert.throws(()=>p.requireOwner(first.owner),/已离线/);assert.throws(()=>p.require(b,'same',second.owner),/离线/);p.complete(second);assert.equal(p.require(b,'same',second.owner),second);assert.throws(()=>p.require(a,'same',first.owner),/离线/);});
 test('a delayed older auto-connect cannot reclaim a newer page; explicit reconnect can',()=>{const p=new PageConnections(),a=p.issue('s'),b=p.issue('s'),newer=p.begin(b,'s').connection;p.complete(newer);assert.throws(()=>p.begin(a,'s'),/后打开/);const reconnected=p.begin(a,'s',true).connection;p.complete(reconnected);assert.equal(p.require(a,'s',reconnected.owner),reconnected);assert.throws(()=>p.requireOwner(newer.owner),/离线/);});
 test('reconnecting the same document invalidates its previous connection token',()=>{const p=new PageConnections(),id=p.issue('s'),first=p.begin(id,'s').connection;p.complete(first);const second=p.begin(id,'s',true).connection;p.complete(second);assert.notEqual(first.owner,second.owner);assert.throws(()=>p.require(id,'s',first.owner),/离线/);assert.throws(()=>p.begin(id,'other',true),/不属于/);});
+function recoveryFixture(){const pages=new PageConnections(),id=pages.issue('s'),connection=pages.begin(id,'s').connection;pages.complete(connection);const socket=()=>({readyState:1,sent:[] as any[],once:()=>{},send(value:string){this.sent.push(JSON.parse(value));},close(){this.readyState=3;}}) as any;return {pages,id,connection,socket};}
+test('temporary loss keeps the reservation but fences actions until both new channels are ready',()=>{
+  const f=recoveryFixture(),c=f.connection,owner=c.owner,activity=c.lastActivity;f.pages.attachChannel(c,f.socket(),'events',0);f.pages.attachChannel(c,f.socket(),'control',0);
+  assert.equal(f.pages.suspend(c,1000),true);assert.equal(c.abort.signal.aborted,false);assert.equal(f.pages.active,c);assert.throws(()=>f.pages.requireOwner(owner),/恢复/);
+  const resumed=f.pages.resume(f.id,'s',owner,1100);assert.equal(resumed.owner,owner);assert.equal(c.lastActivity,activity);assert.equal(c.recoveringSince,1000);
+  assert.throws(()=>f.pages.attachChannel(c,f.socket(),'control',0),/旧连接/);f.pages.attachChannel(c,f.socket(),'events',c.generation);assert.throws(()=>f.pages.requireOwner(owner),/恢复/);
+  const control=f.socket();f.pages.attachChannel(c,control,'control',c.generation);f.pages.requireOwner(owner);assert.equal(c.recoveringSince,null);assert.equal(control.sent.at(-1).type,'connection-ready');assert.throws(()=>f.pages.requireGeneration(c,0),/旧连接/);f.pages.requireGeneration(c,c.generation);
+});
+test('automatic resume cannot steal a replacement page even within the same login',()=>{
+  const f=recoveryFixture(),old=f.connection;f.pages.suspend(old);const newer=f.pages.begin(f.pages.issue('s'),'s').connection;f.pages.complete(newer);
+  assert.throws(()=>f.pages.resume(f.id,'s',old.owner),/原连接/);assert.equal(f.pages.active,newer);assert.equal(old.abort.signal.aborted,true);
+});
+test('retries and heartbeats renew neither the recovery deadline nor the inactivity deadline',()=>{
+  const f=recoveryFixture(),c=f.connection;c.lastActivity=0;f.pages.suspend(c,1000);f.pages.resume(f.id,'s',c.owner,1500);f.pages.heartbeat(c.owner);f.pages.resume(f.id,'s',c.owner,2000);
+  assert.equal(c.recoveringSince,1000);assert.equal(c.lastActivity,0);assert.throws(()=>f.pages.resume(f.id,'s',c.owner,61000),/超时/);
+  const idle=recoveryFixture();idle.connection.lastActivity=0;idle.pages.suspend(idle.connection,299999);assert.throws(()=>idle.pages.resume(idle.id,'s',idle.connection.owner,300000),/5分钟/);
+});
+test('late closes of replaced sockets cannot suspend the restored connection',()=>{
+  const f=recoveryFixture(),c=f.connection,old=f.socket();f.pages.attachChannel(c,old,'events',0);f.pages.attachChannel(c,f.socket(),'control',0);const current=f.socket();f.pages.attachChannel(c,current,'events',0);
+  assert.equal(f.pages.lostChannel(c,old,'events'),false);assert.equal(c.recoveringSince,null);assert.equal(f.pages.lostChannel(c,current,'events'),true);assert.equal(f.pages.suspend(c),true);
+});
+test('real WebSocket loss preserves ownership and a new pair restores the same session',async()=>{
+  const f=recoveryFixture(),c=f.connection,server=new WebSocketServer({host:'127.0.0.1',port:0}),clients:WebSocket[]=[];
+  server.on('connection',(ws,req)=>{const url=new URL(req.url!,'http://fixture'),role=url.pathname==='/events'?'events':'control';ws.on('error',()=>{});f.pages.attachChannel(c,ws,role,Number(url.searchParams.get('generation')));ws.on('close',()=>{if(f.pages.lostChannel(c,ws,role))f.pages.suspend(c);});});
+  await once(server,'listening');const port=(server.address() as any).port;
+  const open=async(role:string,generation:number)=>{const ws=new WebSocket(`ws://127.0.0.1:${port}/${role}?generation=${generation}`);clients.push(ws);ws.on('error',()=>{});const ready=new Promise<void>(resolve=>ws.on('message',raw=>{if(JSON.parse(String(raw)).type==='connection-ready')resolve();}));await once(ws,'open');return {ws,ready};};
+  try{const events=await open('events',0),control=await open('control',0);await Promise.all([events.ready,control.ready]);const owner=c.owner;events.ws.terminate();
+    for(let i=0;i<100&&c.recoveringSince===null;i++)await new Promise(r=>setTimeout(r,5));assert.notEqual(c.recoveringSince,null);assert.equal(f.pages.active?.owner,owner);assert.equal(c.abort.signal.aborted,false);
+    f.pages.resume(f.id,'s',owner);const a=await open('events',c.generation),b=await open('control',c.generation);await Promise.all([a.ready,b.ready]);assert.equal(c.recoveringSince,null);assert.equal(f.pages.require(f.id,'s',owner),c);
+  }finally{f.pages.disconnect(c);for(const ws of clients)ws.terminate();await new Promise<void>(resolve=>server.close(()=>resolve()));}
+});
+test('a script interrupted during initial key release cannot launch after recovery',async()=>{
+  const d=new Device('fixture','unused','unused'),tasks=new Tasks(d);let allowed=true,unblock!:()=>void;d.authorize=()=>{if(!allowed)throw new ConsoleError('CONNECTION_RECOVERING','正在恢复连接');};d.video.release=()=>new Promise<void>(resolve=>unblock=resolve);
+  const start=tasks.start('return 1','owner'),rejected=assert.rejects(start,/恢复/);allowed=false;unblock();await rejected;assert.equal(tasks.records.size,0);assert.equal(d.activeTask,undefined);
+});
 test('queued old-page actions are fenced before they can execute after a takeover',async()=>{const p=new PageConnections(),a=p.issue('s'),b=p.issue('s'),first=p.begin(a,'s').connection;p.complete(first);const d=new Device('test','unused','unused');d.authorize=owner=>p.requireOwner(owner);let release!:()=>void,ran=false;const running=d.enqueue(first.owner,()=>new Promise<void>(r=>release=r));await Promise.resolve();const queued=d.enqueue(first.owner,async()=>{ran=true;});const rejected=assert.rejects(queued,/离线/);const second=p.begin(b,'s').connection;p.complete(second);release();await running;await rejected;assert.equal(ran,false);});
 test('screen-off and locked input are rejected instead of touching a stale frame',async()=>{const d=new Device('test','unused','unused');Object.assign(d.state,{screenOn:false,locked:true,powerCollectedAt:Date.now()});await assert.rejects(d.ensureInteractive(),/屏幕已关闭/);d.state.screenOn=true;await assert.rejects(d.ensureInteractive(),/锁屏/);});
 test('wake requests system unlock and reports credentials still required without touching',async()=>{const d=new Device('test','unused','unused');let calls:string[]=[];d.video.start=async()=>{};d.video.press=async code=>{calls.push('key:'+code);};d.bridge.call=async method=>{calls.push(method);return {} as any;};d.refreshPower=async()=>{d.state.screenOn=true;d.state.locked=true;};const result=await d.wake('page');assert.deepEqual(calls,['key:224','unlock']);assert.equal(result.status,'unlock_required');assert.equal(result.locked,true);});

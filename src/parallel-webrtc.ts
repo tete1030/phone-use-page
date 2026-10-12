@@ -37,6 +37,7 @@ export class ParallelWebRtcVideo {
   async cancel(owner:string,id:string){const key=this.key(owner,id);this.cancelled.set(key,Date.now());for(const [k,t]of this.cancelled)if(Date.now()-t>600000||this.cancelled.size>5000)this.cancelled.delete(k);
     const a=this.attempts.get(key);if(!a)return;this.attempts.delete(key);a.unlink();a.abort.abort();this.credentials.release(a.key);if(this.selected.get(owner)===id)this.selected.delete(owner);a.ws?.close();await a.close?.();}
   async close(owner?:string){await Promise.all([...this.attempts.values()].filter(a=>!owner||a.owner===owner).map(a=>this.cancel(a.owner,a.id)));}
+  async retain(owner:string,id?:string){await Promise.all([...this.attempts.values()].filter(a=>a.owner===owner&&a.id!==id).map(a=>this.cancel(owner,a.id)));}
   registerWss(owner:string,id:string,parent:AbortSignal,ws:WebSocket){if(!this.config.wssFallback)throw new ConsoleError('VIDEO_TRANSPORT_DISABLED','WSS 未启用',400);const a=this.create(owner,id,'wss',parent);a.ws=ws;ws.once('close',()=>{void this.cancel(owner,id);});}
   select(owner:string,id:string){const a=this.attempts.get(this.key(owner,id));if(!a)throw new ConsoleError('ICE_CONFIG_EXPIRED','视频探测已取消',409);
     if(this.selected.get(owner)!==id){this.selected.set(owner,id);for(const candidate of this.attempts.values())if(candidate.owner===owner)candidate.activate?.();}return {provider:a.provider,attemptId:id};}

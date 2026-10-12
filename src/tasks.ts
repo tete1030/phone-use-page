@@ -24,7 +24,7 @@ export class Tasks extends EventEmitter {
   async start(code:string,owner:string,check=false,clickOptions?:ClickOptions){
     if(typeof code!=='string'||!code.trim()||code.length>32768)throw new ConsoleError('SCRIPT_LIMIT','脚本不能为空，且不能超过 32768 字符');
     const task:Task={id:randomUUID(),status:'running',startedAt:Date.now(),logs:[],steps:0,owner,code,clickOptions:resolveClickOptions(clickOptions)};
-    if(!check){this.device.claim(owner);if(this.device.activeTask)throw new ConsoleError('TASK_BUSY','已有脚本运行',409);this.device.activeTask=task.id;this.device.publish();try{await this.device.video.release();}catch(error){this.device.activeTask=undefined;this.device.publish();throw error;}}
+    if(!check){this.device.claim(owner);if(this.device.activeTask)throw new ConsoleError('TASK_BUSY','已有脚本运行',409);this.device.activeTask=task.id;this.device.publish();try{await this.device.video.release();this.device.claim(owner,task.id);}catch(error){if(this.device.activeTask===task.id)this.device.activeTask=undefined;this.device.publish();throw error;}}
     const controller=new AbortController();this.signals.set(task.id,controller);this.records.set(task.id,task);
     const child=fork(resolve('dist/script-worker.js'),[],{cwd:process.cwd(),env:{PATH:process.env.PATH},execArgv:['--max-old-space-size=128'],stdio:['ignore','ignore','pipe','ipc']});this.children.set(task.id,child);
     const wall=setTimeout(()=>this.finish(task,'timeout','任务超过 60 秒时限'),60000);

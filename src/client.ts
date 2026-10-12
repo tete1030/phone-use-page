@@ -55,6 +55,8 @@ async function initialize() {
   let observation:Observation=boot.state,ownsControl=boot.ownsControl,controlAllowed=true,taskBusy=false,appsBusy=false,filter='compact',query='';
   let applications:ReturnType<typeof installApplications>|undefined;
   let online=false,connecting=false,connectionId='',connectionEpoch=0,networkAbort=new AbortController(),needsRefresh=false,waking=false,eventsSocket:WebSocket|null=null;
+  let recovering=false,transportReady=false,readySignal=false,transportGeneration=0,recoverySince=0,recoveryAttempt=0,lastControlMessage=0,lastEventsMessage=0;
+  let recoveryTimer:ReturnType<typeof setTimeout>|undefined,handshakeTimer:ReturnType<typeof setTimeout>|undefined,recoveryDeadline:ReturnType<typeof setTimeout>|undefined;
   let inspected:{node:AndroidNode;snapshotId:string}|null=null;
   let draftTarget:DraftTarget|null=null,dirty=false,textPending=false,textNotice='';
   let currentTask:any=boot.tasks[0]||null,keyMode='letters',control:WebSocket|null=null;
@@ -80,9 +82,9 @@ async function initialize() {
   q('.node-list').replaceChildren();
   const assign=(el:Element,value:string)=>{if(el.textContent!==value)el.textContent=value;};
   const target=(n:AndroidNode):Target=>({id:n.id,fingerprint:n.fingerprint,snapshotId:observation.snapshotId});
-  const url=(path:string)=>{const u=new URL(endpoint(path),location.href);u.searchParams.set('page',boot.pageId);u.searchParams.set('connection',connectionId);return u.toString().replace(/^http/,'ws');};
+  const url=(path:string)=>{const u=new URL(endpoint(path),location.href);u.searchParams.set('page',boot.pageId);u.searchParams.set('connection',connectionId);u.searchParams.set('generation',String(transportGeneration));return u.toString().replace(/^http/,'ws');};
   const viewUrl=(path:string)=>{const u=new URL(endpoint(path),location.href);u.searchParams.set('page',boot.pageId);u.searchParams.set('connection',connectionId);return u.pathname+u.search;};
-  const interactive=()=>online&&!waking&&powerKnown()&&observation.screenOn&&observation.locked===false;
+  const interactive=()=>online&&transportReady&&!waking&&powerKnown()&&observation.screenOn&&observation.locked===false;
   function touchBlockedReason(){
     if(!online)return '本页已离线';
     if(waking)return '正在唤醒并解锁';
@@ -105,9 +107,9 @@ async function initialize() {
   fit();
   new ResizeObserver(fitPhone).observe(q('.phone-stage'));
   async function api(path:string,data?:unknown){if(!online)throw new Error('PAGE_OFFLINE: 本页已离线');const epoch=connectionEpoch;
-    const response=await fetch(endpoint(path),{method:data===undefined?'GET':'POST',headers:{'X-Console-Page':boot.pageId,'X-Console-Connection':connectionId,...(data===undefined?{}:{'Content-Type':'application/json','X-Console-CSRF':boot.csrf})},body:data===undefined?undefined:JSON.stringify(data),signal:networkAbort.signal});
+    const response=await fetch(endpoint(path),{method:data===undefined?'GET':'POST',headers:{'X-Console-Page':boot.pageId,'X-Console-Connection':connectionId,'X-Console-Generation':String(transportGeneration),...(data===undefined?{}:{'Content-Type':'application/json','X-Console-CSRF':boot.csrf})},body:data===undefined?undefined:JSON.stringify(data),signal:networkAbort.signal});
     const result=await response.json();if(!online||epoch!==connectionEpoch)throw new Error('PAGE_OFFLINE: 连接已更换');
-    if(!response.ok){if(result.error?.code==='PAGE_OFFLINE')goOffline('本页连接已失效，请重新连接');else if(result.error?.code==='LOGIN_REQUIRED')goOffline(offlineReason('LOGIN_REQUIRED'));throw new Error(result.error?.code+': '+result.error?.message);}return result;
+    if(!response.ok){if(result.error?.code==='CONNECTION_RECOVERING')beginRecovery();else if(result.error?.code==='PAGE_OFFLINE')goOffline('本页连接已失效，请重新连接');else if(['LOGIN_REQUIRED','IDLE_TIMEOUT'].includes(result.error?.code))goOffline(offlineReason(result.error.code));throw new Error(result.error?.code+': '+result.error?.message);}return result;
   }
   function log(message:string){if(!online)return;const row=document.createElement('div');row.className='log-line';const prefix=document.createElement('span');prefix.className='log-time';prefix.textContent=new Date().toLocaleTimeString();const content=document.createElement('span');content.className='log-message';content.textContent=message;row.append(prefix,content);q('.results').prepend(row);q('.results').scrollTop=0;while(q('.results').children.length>100)q('.results').lastChild?.remove();}
   async function perform(path:string,data:any){try{const result=await api(path,{requestId:crypto.randomUUID(),...(path==='/api/node'?{clickOptions:clickOptions()}:{}),...data});const names:Record<string,string>={'/api/node':data.action==='setText'?'填写文字':data.action==='focus'?'聚焦输入框':data.action==='click'?'点击':'节点动作','/api/press':'手机按键','/api/gesture':data.kind||'手势','/api/wake':'唤醒并解锁','/api/panel':data.kind==='notifications'?'展开通知栏':'展开控制中心','/api/apps/open':'打开应用','/api/android-tasks/switch':'切换任务','/api/navigation/back':'连续返回'};log((names[path]||path)+' · '+(data.key||data.packageName||data.target?.id||data.taskId||'')+' · '+(result.verification==='verified'?'效果已验证':result.verification==='failed'?'验证失败':result.verification==='inconclusive'?'无法确认效果':'已发送，未验证'));const detail=document.createElement('details'),title=document.createElement('summary'),pre=document.createElement('pre');title.textContent='技术详情';pre.textContent=JSON.stringify(result,null,2);detail.append(title,pre);q('.results').firstChild?.appendChild(detail);return result;}catch(error){log(String(error));throw error;}}
@@ -129,7 +131,7 @@ async function initialize() {
     assign(q('.text-status'),!online?'本页已离线，草稿保留':!interactive()?'手机状态不可操作，草稿保留':textPending?'正在处理文字请求；不会自动重试':!node&&draftTarget?(textNotice&&!textNotice.startsWith('草稿')?textNotice+'；目标已改变，请重新选择':'目标已改变，请重新选择；草稿保留'):textNotice||(!node?'请选择输入字段；仅有一个手机文字焦点时会自动选中':'网页内容仅为草稿，点击“填写到手机”才会替换原文'));
     inputAvailability();
   }
-  function inputAvailability(){phone.disabled=!online||taskBusy||appsBusy;text.readOnly=textPending;q<HTMLButtonElement>('.video-reconnect').disabled=!online;const blocked=!!touch?.active()||!interactive()||(!controlAllowed||appsBusy)||!observation.controlAvailable;q('.keys')?.querySelectorAll<HTMLButtonElement>('button').forEach(b=>b.disabled=blocked);qa('[data-press],[data-gesture],[data-mode],[data-panel]').forEach(b=>(b as HTMLButtonElement).disabled=blocked);q<HTMLButtonElement>('.run').disabled=taskBusy||!!touch?.active();q<HTMLButtonElement>('.check-code').disabled=taskBusy;details();route();}
+  function inputAvailability(){phone.disabled=!online||!transportReady||taskBusy||appsBusy;text.readOnly=textPending;q<HTMLButtonElement>('.video-reconnect').disabled=!online;const blocked=!!touch?.active()||!interactive()||(!controlAllowed||appsBusy)||!observation.controlAvailable;q('.keys')?.querySelectorAll<HTMLButtonElement>('button').forEach(b=>b.disabled=blocked);qa('[data-press],[data-gesture],[data-mode],[data-panel]').forEach(b=>(b as HTMLButtonElement).disabled=blocked);q<HTMLButtonElement>('.run').disabled=!online||!transportReady||taskBusy||!!touch?.active();q<HTMLButtonElement>('.check-code').disabled=!online||taskBusy;details();route();}
   function route(){const active=document.activeElement,ready=interactive()&&!!control&&control.readyState===1&&observation.controlAvailable&&controlAllowed&&!appsBusy, captured=active===phone&&ready;
     const focus=active===phone?'手机画面':active===text?'文本输入框':active===editor?'JS 编辑框':active===q('.node-search')?'元素搜索框':'网页';
     q('.routing').classList.toggle('captured',captured);assign(q('.focus-target'),focus);assign(q('.key-target'),captured?'手机按键':'网页');assign(q('.keyboard-backend'),observation.keyboardBackend==='uhid'?'原始键盘：UHID':'原始键盘：兼容按键；推荐文字直达');assign(q('.capture-status'),!online?'已离线':captured?'键盘输入手机 · Esc 退出':active===phone?'手机暂不可输入':'键盘留在网页');
@@ -232,9 +234,9 @@ async function initialize() {
   function apiVisibility(open:boolean,focus=false){q<HTMLElement>('.api-panel').hidden=!open;q('.code-field').classList.toggle('help-open',open);q('.api-toggle').setAttribute('aria-expanded',String(open));if(focus)editor.focus();}
   for(const method of boot.apiMethods){const entry=document.createElement('section');entry.className='api-entry';const head=document.createElement('h3');head.className='api-signature';head.textContent=method.signature;entry.append(head);for(const value of [method.purpose,method.params,method.result]){const p=document.createElement('p');p.textContent=value;entry.append(p);}const example=document.createElement('pre');example.className='api-example';example.textContent=method.example;const note=document.createElement('p');note.className='dim';note.textContent=method.note;const button=document.createElement('button');button.type='button';button.className='api-insert';button.textContent='插入 '+method.name+' 示例';button.addEventListener('click',()=>{editor.setRangeText(method.example+'\n',editor.selectionStart,editor.selectionEnd,'end');apiVisibility(false,true);});entry.append(example,note,button);q('.api-details').append(entry);}
   q('.api-toggle').addEventListener('click',()=>apiVisibility(!!q<HTMLElement>('.api-panel').hidden));q('.api-panel').addEventListener('keydown',event=>{if((event as KeyboardEvent).key==='Escape'){event.preventDefault();event.stopPropagation();apiVisibility(false,true);}});
-  function offlineReason(reason:string){if(reason==='IDLE_TIMEOUT')return '5分钟无操作，本页已断开；刷新或点击重新连接即可继续。';return reason==='PAGE_REPLACED'?'另一页面已连接，本页已离线；本页批量操作已停止。':reason==='SERVER_RESTART'?'服务已重启，请刷新页面重新连接。':['LOGIN_REQUIRED','LOGGED_OUT'].includes(reason)?'登录已失效，请刷新并重新登录。':'连接已断开，画面和状态已暂停。';}
-  function renderPhone(){q<HTMLElement>('.mobile-reconnect').hidden=online||connecting;assign(q('.mobile-status'),!online?'已离线':!powerKnown()?'手机状态未知':!observation.screenOn?'手机息屏':observation.locked!==false?'手机锁屏':touch?.active()?'触摸中':textPending?'正在处理文字':touchNotice?'手势已取消，详情见工具日志':touchReady()?'触摸就绪':'控制准备中');const known=powerKnown(),awake=observation.screenOn,unlocked=observation.locked===false;
-    const title=!online?(connecting?'正在连接':'已离线'):waking?'正在唤醒并解锁':!known?'正在读取手机状态':!awake?'屏幕已关闭':!unlocked?'手机已锁屏':'';
+  function offlineReason(reason:string){if(reason==='IDLE_TIMEOUT')return '5分钟无操作，本页已断开；刷新或点击重新连接即可继续。';if(reason==='RECOVERY_TIMEOUT')return '恢复连接超时，请点击重新连接或刷新。';if(reason==='ORIGIN_REJECTED')return '连接来源验证失败，请刷新页面。';return reason==='PAGE_REPLACED'?'另一页面已连接，本页已离线；本页批量操作已停止。':reason==='SERVER_RESTART'?'服务已重启，请刷新页面重新连接。':['LOGIN_REQUIRED','LOGGED_OUT'].includes(reason)?'登录已失效，请刷新并重新登录。':'连接已断开，画面和状态已暂停。';}
+  function renderPhone(){q<HTMLElement>('.mobile-reconnect').hidden=online||connecting;assign(q('.mobile-status'),recovering?'正在恢复连接':!online?'已离线':!powerKnown()?'手机状态未知':!observation.screenOn?'手机息屏':observation.locked!==false?'手机锁屏':touch?.active()?'触摸中':textPending?'正在处理文字':touchNotice?'手势已取消，详情见工具日志':touchReady()?'触摸就绪':'控制准备中');const known=powerKnown(),awake=observation.screenOn,unlocked=observation.locked===false;
+    const title=recovering?'':!online?(connecting?'正在连接':'已离线'):waking?'正在唤醒并解锁':!known?'正在读取手机状态':!awake?'屏幕已关闭':!unlocked?'手机已锁屏':'';
     q<HTMLElement>('.screen-shield').hidden=!title;assign(q('.screen-title'),title);
     assign(q('.screen-help'),!online?'画面非实时。点击页面上方「重新连接」或刷新。':waking?'正在唤醒并请求解锁…':!known?'视频暂停，画面非实时。请稍候。':!awake||!unlocked?'视频已暂停，画面非实时。点击画面或下方「唤醒并解锁」。若未解锁，请在手机上完成。':'');
     assign(q('.device-status'),!known?'正在读取手机状态':!awake?'屏幕已关闭':!unlocked?'已锁屏':'已解锁');
@@ -245,30 +247,61 @@ async function initialize() {
   }
   async function wakePhone(){if(!online||waking||taskBusy||appsBusy)return;waking=true;renderPhone();try{const result=await perform('/api/wake',{});if(result){observation.screenOn=result.screenOn;observation.locked=result.locked;observation.powerCollectedAt=Date.now();}}
     catch(e){log(String(e));}finally{waking=false;renderPhone();textState();details();}}
-  function goOffline(message:string){document.querySelector<HTMLDialogElement>('.action-confirmation')?.close('cancel');if(!online&&!connecting)return;if(message.includes('服务已重启')||message.includes('登录已失效'))needsRefresh=true;if(message.includes('登录已失效'))sessionStorage.setItem('android-console-login-reason','登录状态已失效，请重新登录。');online=false;connecting=false;connectionEpoch++;networkAbort.abort();if(currentTask)currentTask={...currentTask,canStop:false};held.clear();touch?.cancel(undefined,false);
+  function goOffline(message:string){document.querySelector<HTMLDialogElement>('.action-confirmation')?.close('cancel');if(!online&&!connecting)return;clearRecoveryTimers();recovering=false;transportReady=false;if(message.includes('服务已重启')||message.includes('登录已失效'))needsRefresh=true;if(message.includes('登录已失效'))sessionStorage.setItem('android-console-login-reason','登录状态已失效，请重新登录。');online=false;connecting=false;connectionEpoch++;networkAbort.abort();if(currentTask)currentTask={...currentTask,canStop:false};held.clear();touch?.cancel(undefined,false);
     applications?.pause();const sockets=[eventsSocket,control];eventsSocket=null;control=null;for(const socket of sockets)try{socket?.close();}catch{}
     videoManager?.stop();canvas.pause();phone.dataset.videoConnection='closed';
     q<HTMLElement>('.workspace').inert=true;assign(q('.page-status'),'已离线');q('.page-status').setAttribute('data-state','offline');q<HTMLElement>('.page-reconnect').hidden=false;q<HTMLElement>('.connection-note').hidden=false;
     assign(q('.connection-note'),message+' 画面和状态停止更新；点击「重新连接」或刷新可接管手机。');assign(q('.transport-status'),'已离线');assign(q('.video-status'),'画面已暂停');textState();renderPhone();route();
   }
   async function connectPage(explicit=false){if(connecting)return;connecting=true;online=false;const epoch=++connectionEpoch;networkAbort=new AbortController();q<HTMLElement>('.workspace').inert=true;
+    clearRecoveryTimers();transportReady=false;readySignal=false;
     assign(q('.page-status'),'连接中');q('.page-status').setAttribute('data-state','connecting');q<HTMLElement>('.page-reconnect').hidden=true;q<HTMLElement>('.connection-note').hidden=false;assign(q('.connection-note'),'正在连接；后打开的页面会接替之前的页面。');renderPhone();
     try{const r=await fetch(endpoint('/api/connection/connect'),{method:'POST',headers:{'Content-Type':'application/json','X-Console-CSRF':boot.csrf},body:JSON.stringify({pageId:boot.pageId,explicit}),signal:networkAbort.signal});const result=await r.json();if(epoch!==connectionEpoch)return;
       if(!r.ok){needsRefresh=['PAGE_EXPIRED','LOGIN_REQUIRED','CSRF_REJECTED'].includes(result.error?.code);if(result.error?.code==='LOGIN_REQUIRED')sessionStorage.setItem('android-console-login-reason','登录状态已失效，请重新登录。');throw new Error(result.error?.message||'连接失败');}
-      sessionStorage.removeItem('android-console-login-reason');connectionId=result.connectionId;online=true;connecting=false;needsRefresh=false;frameRequiredAfter=performance.now();q<HTMLElement>('.workspace').inert=false;assign(q('.page-status'),'在线');q('.page-status').setAttribute('data-state','online');q<HTMLElement>('.connection-note').hidden=true;
-      videoProvider=undefined;connectEvents();connectControl();void connectVideo();applications?.resume();update(observation);q<HTMLAnchorElement>('.task-link').href=viewUrl(currentTask?'/tasks/'+currentTask.id:'/observe');
+      sessionStorage.removeItem('android-console-login-reason');connectionId=result.connectionId;transportGeneration=result.generation||0;online=true;connecting=false;needsRefresh=false;frameRequiredAfter=performance.now();assign(q('.page-status'),'连接中');
+      videoProvider=undefined;connectEvents();connectControl();void connectVideo();applications?.resume();update(observation);handshakeTimer=setTimeout(()=>beginRecovery(),8000);q<HTMLAnchorElement>('.task-link').href=viewUrl(currentTask?'/tasks/'+currentTask.id:'/observe');
     }catch(error){if(epoch===connectionEpoch)goOffline(error instanceof Error?error.message:String(error));}
   }
   q('.mobile-reconnect').addEventListener('click',()=>needsRefresh?location.reload():void connectPage(true));
   q('.page-reconnect').addEventListener('click',()=>needsRefresh?location.reload():void connectPage(true));
-  function connectControl(){const epoch=connectionEpoch,socket=new WebSocket(url('/ws/control'));control=socket;socket.onopen=()=>{if(epoch===connectionEpoch)route();};socket.onmessage=event=>{if(!online||epoch!==connectionEpoch)return;const data=JSON.parse(event.data);if(data.type==='offline'){goOffline(offlineReason(data.reason));return;}if(data.gesture){touch?.acknowledgement(data);return;}if(data.type==='error')log(data.message);else if(data.type==='ack'){ownsControl=true;route();if(data.request&&data.kind!=='move')log('事件 '+data.request.slice(0,8)+' · 已发送，未验证 · '+(data.backend||''));}};socket.onclose=event=>{if(online&&epoch===connectionEpoch)goOffline(offlineReason(event.reason));};}
+  function clearRecoveryTimers(){clearTimeout(recoveryTimer);clearTimeout(handshakeTimer);clearTimeout(recoveryDeadline);recoveryTimer=handshakeTimer=recoveryDeadline=undefined;}
+  function closeControlSockets(){const old=[eventsSocket,control];eventsSocket=control=null;readySignal=false;for(const socket of old)try{socket?.close();}catch{}}
+  function controlsReady(){if(!readySignal||control?.readyState!==1||eventsSocket?.readyState!==1)return;
+    const restored=recovering;clearRecoveryTimers();recovering=false;connecting=false;online=true;transportReady=true;recoveryAttempt=0;lastControlMessage=lastEventsMessage=Date.now();
+    q<HTMLElement>('.workspace').inert=false;assign(q('.page-status'),'在线');q('.page-status').setAttribute('data-state','online');q<HTMLElement>('.connection-note').hidden=true;
+    if(restored){applications?.resume();connectVideo();log('原会话连接已恢复；旧操作未重放');}update(observation);inputAvailability();
+  }
+  function beginRecovery(){if(recovering||!online||!connectionId)return;clearRecoveryTimers();connectionEpoch++;recovering=true;connecting=true;online=false;transportReady=false;recoverySince=Date.now();recoveryAttempt=0;networkAbort.abort();
+    document.querySelector<HTMLDialogElement>('.action-confirmation')?.close('cancel');if(currentTask)currentTask={...currentTask,canStop:false};touch?.cancel(undefined,true);void releaseKeys();applications?.pause();closeControlSockets();
+    q<HTMLElement>('.workspace').inert=true;assign(q('.page-status'),'恢复连接');q('.page-status').setAttribute('data-state','recovering');q<HTMLElement>('.page-reconnect').hidden=true;q<HTMLElement>('.connection-note').hidden=false;
+    assign(q('.connection-note'),'网络连接中断，正在恢复原会话；操作暂停，不会重放旧输入或接管其他页面。');assign(q('.video-status'),'控制连接恢复中');renderPhone();inputAvailability();
+    recoveryDeadline=setTimeout(()=>goOffline(offlineReason('RECOVERY_TIMEOUT')),60000);scheduleRecovery(0);
+  }
+  function scheduleRecovery(delay?:number){if(!recovering||recoveryTimer!==undefined)return;clearTimeout(handshakeTimer);handshakeTimer=undefined;
+    recoveryTimer=setTimeout(()=>{recoveryTimer=undefined;void resumeConnection();},delay??Math.min(5000,250*2**Math.min(recoveryAttempt,5)));
+  }
+  async function resumeConnection(){if(!recovering)return;if(Date.now()-recoverySince>=60000){goOffline(offlineReason('RECOVERY_TIMEOUT'));return;}
+    const epoch=++connectionEpoch;recoveryAttempt++;closeControlSockets();networkAbort.abort();networkAbort=new AbortController();
+    try{const response=await fetch(endpoint('/api/connection/resume'),{method:'POST',headers:{'Content-Type':'application/json','X-Console-CSRF':boot.csrf},body:JSON.stringify({pageId:boot.pageId,connectionId,videoAttemptId:videoManager?.active()?.id}),signal:AbortSignal.any([networkAbort.signal,AbortSignal.timeout(8000)])});const result=await response.json();if(!recovering||epoch!==connectionEpoch)return;
+      if(!response.ok){if(response.status>=400&&response.status<500&&response.status!==429){needsRefresh=['LOGIN_REQUIRED','PAGE_EXPIRED','CSRF_REJECTED','ORIGIN_REJECTED'].includes(result.error?.code);goOffline(['LOGIN_REQUIRED','IDLE_TIMEOUT','RECOVERY_TIMEOUT'].includes(result.error?.code)?offlineReason(result.error.code):result.error?.message||'原会话已失效，自动恢复已停止');return;}throw Error('恢复请求暂未成功');}
+      if(result.connectionId!==connectionId)throw Error('原会话身份不匹配');transportGeneration=result.generation;connectEvents();connectControl();handshakeTimer=setTimeout(()=>scheduleRecovery(),8000);
+    }catch{if(recovering&&epoch===connectionEpoch)scheduleRecovery();}
+  }
+  function connectionMessage(data:any){if(data.type==='heartbeat')return true;if(data.type==='connection-ready'){if(data.generation===transportGeneration){readySignal=true;controlsReady();}return true;}if(data.type==='offline'){goOffline(offlineReason(data.reason));return true;}if(data.type==='recovering'){beginRecovery();return true;}return false;}
+  function socketClosed(event:CloseEvent,epoch:number){if(epoch!==connectionEpoch||!online&&!recovering)return;
+    if(['PAGE_REPLACED','LOGGED_OUT','LOGIN_REQUIRED','IDLE_TIMEOUT','RECOVERY_TIMEOUT','SERVER_RESTART','ORIGIN_REJECTED'].includes(event.reason)){goOffline(offlineReason(event.reason));return;}
+    if(recovering)scheduleRecovery();else beginRecovery();
+  }
+  function connectControl(){const epoch=connectionEpoch,socket=new WebSocket(url('/ws/control'));control=socket;socket.onopen=()=>{if(epoch===connectionEpoch){lastControlMessage=Date.now();controlsReady();route();}};socket.onmessage=event=>{if(!online&&!recovering||epoch!==connectionEpoch)return;lastControlMessage=Date.now();const data=JSON.parse(event.data);if(connectionMessage(data))return;if(data.gesture){touch?.acknowledgement(data);return;}if(data.type==='error')log(data.message);else if(data.type==='ack'){ownsControl=true;route();if(data.request&&data.kind!=='move')log('事件 '+data.request.slice(0,8)+' · 已发送，未验证 · '+(data.backend||''));}};socket.onclose=event=>socketClosed(event,epoch);}
   setInterval(()=>{if(online){if(control?.readyState===1)control.send(JSON.stringify({type:'heartbeat'}));if(eventsSocket?.readyState===1)eventsSocket.send(JSON.stringify({type:'heartbeat'}));}},15000);
-  function connectEvents(){const epoch=connectionEpoch,events=new WebSocket(url('/ws/events'));eventsSocket=events;events.onmessage=event=>{if(!online||epoch!==connectionEpoch)return;const data=JSON.parse(event.data);
-    if(data.type==='offline'){goOffline(offlineReason(data.reason));return;}
-    if(data.type==='observation'){ownsControl=data.ownsControl;controlAllowed=data.controlAllowed;taskBusy=data.taskBusy;update(data.state);}
+  function connectEvents(){const epoch=connectionEpoch,events=new WebSocket(url('/ws/events'));eventsSocket=events;events.onopen=()=>{if(epoch===connectionEpoch){lastEventsMessage=Date.now();controlsReady();}};events.onmessage=event=>{if(!online&&!recovering||epoch!==connectionEpoch)return;lastEventsMessage=Date.now();const data=JSON.parse(event.data);
+    if(connectionMessage(data))return;
+    if(data.type==='observation'){ownsControl=data.ownsControl;controlAllowed=data.controlAllowed;taskBusy=data.taskBusy;observation=data.state;update(data.state);}
     else if(data.type==='power'){observation.screenOn=data.screenOn;observation.locked=data.locked;observation.powerCollectedAt=data.powerCollectedAt;if(!interactive())void releaseInput();renderPhone();textState();details();}
     else if(data.type==='task')task(data.task);else if(data.type==='tasks')for(const t of data.tasks)task(t);
-  };events.onclose=event=>{if(online&&epoch===connectionEpoch)goOffline(offlineReason(event.reason));};}
+  };events.onclose=event=>socketClosed(event,epoch);}
+  function checkControlHeartbeat(){if(online&&transportReady&&(Date.now()-lastControlMessage>45000||Date.now()-lastEventsMessage>45000))beginRecovery();}
+  setInterval(checkControlHeartbeat,1000);addEventListener('offline',()=>beginRecovery());addEventListener('online',()=>{if(recovering){clearTimeout(recoveryTimer);recoveryTimer=undefined;scheduleRecovery(0);}});document.addEventListener('visibilitychange',()=>{if(!document.hidden){checkControlHeartbeat();if(recovering)scheduleRecovery(0);}});
   function ensureVideoManager(){
     if(videoManager)return;
     videoManager=createVideoManager({providers:videoProviders,container:phone,paused:videoPaused,
@@ -280,7 +313,7 @@ async function initialize() {
   function renderVideoState(){const state=videoManager?.snapshot(),active=videoManager?.active(),current=state?.current;
     const now=performance.now(),paused=videoPaused();if(previousVideoPaused&&!paused)frameRequiredAfter=now;previousVideoPaused=paused;
     if(active&&typeof current?.lastFrameAt==='number')lastDisplayedFrameAt=current.lastFrameAt;
-    const freshness=videoFreshness({online,connecting,pauseReason:videoPauseReason(),active:!!active,lastFrameAt:lastDisplayedFrameAt,requiredAfter:frameRequiredAfter,now});
+    const freshness=videoFreshness({online,connecting,recovering,pauseReason:videoPauseReason(),active:!!active,lastFrameAt:lastDisplayedFrameAt,requiredAfter:frameRequiredAfter,now});
     const rtt=active?.provider==='wss'?current?.media?.roundTripMs:current?.selectedPair?.roundTripMs;
     const latency=online&&active&&Number.isFinite(rtt)&&rtt>=0?`网络往返 ${Math.round(rtt)} ms`:'网络往返待测';
     assign(q('.video-freshness-status'),freshness.title+'；'+freshness.detail+'；'+latency);

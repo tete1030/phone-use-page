@@ -1,6 +1,6 @@
 import {appendFile,mkdir,rename,stat} from 'node:fs/promises';
 import {join} from 'node:path';
-export interface AuditEntry {at:string;method:string;path:string;status:number;ip:string;client:string;owner?:string;user?:string;session?:string;requestId?:string;action?:string;target?:string;verification?:string}
+export interface AuditEntry {at:string;method:string;path:string;status:number;ip:string;client:string;owner?:string;user?:string;session?:string;requestId?:string;action?:string;target?:string;verification?:string;closeCode?:number;reason?:string;errorCode?:string}
 export class Audit {
   private tail:Promise<unknown>=Promise.resolve();private entries:AuditEntry[]=[];
   constructor(private directory:string){}

@@ -177,6 +177,7 @@ body{background:#f5f7fc}
 #android-observable .device-status{margin-left:auto;white-space:nowrap;padding:2px 8px;border:1px solid var(--as-line);border-radius:3px;font-size:12px}
 #android-observable .page-status{padding:2px 8px;border-radius:3px;background:#eef4ff;color:#3e65a0;font-size:12px;white-space:nowrap}
 #android-observable .page-status[data-state=offline]{background:#fff0eb;color:#a14f3a}
+#android-observable .page-status[data-state=recovering]{background:#fff5e3;color:#976a2e}
 #android-observable .page-reconnect{min-height:24px;font-size:12px;background:#fff3ee;border-color:#eacabd}
 #android-observable .routing{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:26px 16px;gap:0 12px;padding:4px 12px;background:#f0f4fb;color:var(--as-text)}
 #android-observable .routing.captured{background:#eaf2ff}

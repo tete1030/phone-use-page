@@ -44,3 +44,7 @@ test('parallel config identities coexist and cancelling one does not revoke anot
   }finally{await f.rtc.close();}});
 test('late prepare for a cancelled attempt is rejected and cannot revive credentials',async()=>{const f=backend(),id=randomUUID();try{await f.rtc.cancel('owner',id);await assert.rejects(f.rtc.prepare('owner',new AbortController().signal,'cloudflare',id),/取消/);assert.equal(f.issued(),0);}finally{await f.rtc.close();}});
 test('other owner cannot select or cancel a foreign media candidate',async()=>{const f=backend(),id=randomUUID();try{await f.rtc.prepare('owner',new AbortController().signal,'coturn',id);assert.throws(()=>f.rtc.select('foreign',id),/取消/);await f.rtc.cancel('foreign',id);assert.equal((await f.rtc.diagnostics('owner')).attempts.length,1);}finally{await f.rtc.close();}});
+test('recovery retains the displayed media while removing obsolete probes only for its owner',async()=>{const f=backend(),keep=randomUUID(),probe=randomUUID(),foreign=randomUUID();try{
+  await f.rtc.prepare('owner',new AbortController().signal,'coturn',keep);await f.rtc.prepare('owner',new AbortController().signal,'cloudflare',probe);await f.rtc.prepare('other',new AbortController().signal,'coturn',foreign);
+  await f.rtc.retain('owner',keep);assert.deepEqual((await f.rtc.diagnostics('owner')).attempts.map((a:any)=>a.attemptId),[keep]);assert.equal((await f.rtc.diagnostics('other')).attempts.length,1);
+}finally{await f.rtc.close();}});

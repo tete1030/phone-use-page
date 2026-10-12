@@ -31,6 +31,7 @@ try {
   browser=await chromium.launch({executablePath:process.env.CHROME_PATH||'/opt/google/chrome/chrome',headless:true,args:['--no-sandbox']});
   const context=await browser.newContext({viewport:{width:1919,height:998},permissions:['clipboard-read','clipboard-write']});
   await context.addInitScript(()=>{
+    const nativeTimeout=window.setTimeout;window.setTimeout=(fn,ms,...args)=>nativeTimeout(fn,window.__fastRecovery&&ms===60000?50:ms,...args);
     window.__messages=[];
     window.__sockets=[];
     window.__offers=0;
@@ -47,8 +48,8 @@ try {
     const fixtureMode=localStorage.getItem('fixture-mode');
     class FixtureSocket {
       readyState=1;
-      constructor(url){this.url=url;window.__sockets.push(this);setTimeout(()=>this.onopen?.({}),0);}
-      send(value){if(this.url.includes('/ws/control')){const data=JSON.parse(value);window.__messages.push(data);if(data.gesture&&(data.type==='touch'||data.type==='touch-move')&&!window.__ackDisabled)setTimeout(()=>this.onmessage?.({data:JSON.stringify({type:'ack',gesture:data.gesture,seq:data.seq+(data.points?.length||1)-1,samples:data.points?.length||1,queueMs:0})}),0);}}
+      constructor(url){this.url=url;window.__sockets.push(this);setTimeout(()=>{this.onopen?.({});const u=new URL(url),generation=Number(u.searchParams.get('generation')||0);const peers=window.__sockets.filter(s=>s.readyState===1&&new URL(s.url).searchParams.get('generation')===u.searchParams.get('generation')&&/\/ws\/(events|control)/.test(s.url));if(!window.__blockReady&&peers.some(s=>s.url.includes('/ws/events'))&&peers.some(s=>s.url.includes('/ws/control')))for(const s of peers)s.onmessage?.({data:JSON.stringify({type:'connection-ready',generation})});},0);}
+      send(value){if(JSON.parse(value).type==='heartbeat'){setTimeout(()=>this.onmessage?.({data:JSON.stringify({type:'heartbeat'})}),0);return;}if(this.url.includes('/ws/control')){const data=JSON.parse(value);window.__messages.push(data);if(data.gesture&&(data.type==='touch'||data.type==='touch-move')&&!window.__ackDisabled)setTimeout(()=>this.onmessage?.({data:JSON.stringify({type:'ack',gesture:data.gesture,seq:data.seq+(data.points?.length||1)-1,samples:data.points?.length||1,queueMs:0})}),0);}}
       close(){this.readyState=3;}
     }
     window.WebSocket=FixtureSocket;
@@ -68,7 +69,8 @@ try {
       if(!path.startsWith('/api/'))return originalFetch(url,options);
       window.__requests.push({path,body:options?.body?JSON.parse(options.body):null});
       let data={};
-      if(path==='/api/connection/connect')data={connectionId:'fixture'};
+      if(path==='/api/connection/connect')data={connectionId:'fixture',generation:0};
+      if(path==='/api/connection/resume'){if(window.__resumeStatus)return new Response(JSON.stringify({error:{code:window.__resumeCode||'SERVER_ERROR',message:'原连接已失效或被其他页面接管'}}),{status:window.__resumeStatus});data={connectionId:'fixture',generation:(window.__resumeGeneration=(window.__resumeGeneration||0)+1)};}
       if(path==='/api/app-state')data={collectedAt:Date.now(),catalog:{apps:[]},processes:[],navigation:{locked:false,current:null,tasks:[]}};
       if(path==='/api/webrtc/config')data={provider:'coturn',availableProviders:['coturn'],iceTransportPolicy:'relay',iceServers:[{urls:'turns:fixture.invalid:8443?transport=tcp'}],renewAfterMs:null};
       if(path==='/api/webrtc/config'&&fixtureMode)data={...data,provider:'cloudflare',availableProviders:['cloudflare'],gatherMs:50};
@@ -313,6 +315,31 @@ try {
   assert.equal((await touches())[0].action,0);assert.equal((await touches()).at(-1).action,1);await page.locator('.close-enlarge').click();
   checks.push({name:'mobile layouts fit portrait/landscape and immersive fallback retains touch layer'});
   await page.setViewportSize({width:1919,height:998});await page.waitForTimeout(100);assert.equal(await page.locator('.right-shell').isVisible(),true);
+  const drop=channel=>page.evaluate(channel=>{const socket=window.__sockets.filter(s=>s.readyState===1&&s.url.includes('/ws/'+channel)).at(-1);window.__droppedSocket=socket;socket.readyState=3;socket.onclose?.({code:1006,reason:''});},channel);
+  await page.locator('.text-input').fill('断线时保留的草稿');const offersBeforeRecovery=await page.evaluate(()=>window.__offers);
+  await page.evaluate(()=>{window.__blockReady=true;window.__requests=[];window.__messages=[];});await drop('control');
+  await page.waitForFunction(()=>document.querySelector('.page-status').dataset.state==='recovering');assert.equal(await page.locator('.run').isDisabled(),true);
+  await page.mouse.click(center.x,center.y);assert.equal((await touches()).length,0);assert.equal(await page.locator('.screen-shield').isVisible(),false);
+  await page.waitForFunction(()=>window.__requests.some(r=>r.path==='/api/connection/resume'));
+  await page.waitForTimeout(40);
+  await page.evaluate(()=>{const peers=window.__sockets.filter(s=>s.readyState===1&&/\/ws\/(control|events)/.test(s.url)),control=peers.find(s=>s.url.includes('/ws/control')),events=peers.find(s=>s.url.includes('/ws/events'));control.readyState=0;events.onmessage?.({data:JSON.stringify({type:'connection-ready',generation:Number(new URL(events.url).searchParams.get('generation'))})});});
+  assert.equal(await page.locator('.page-status').getAttribute('data-state'),'recovering');
+  await page.evaluate(()=>{window.__blockReady=false;const control=window.__sockets.filter(s=>s.url.includes('/ws/control')).at(-1);control.readyState=1;control.onopen?.({});});
+  await page.waitForFunction(()=>document.querySelector('.page-status').textContent==='在线');
+  assert.equal(await page.evaluate(()=>window.__offers),offersBeforeRecovery);assert.equal(await page.locator('.text-input').inputValue(),'断线时保留的草稿');
+  assert.equal(await page.evaluate(()=>window.__requests.filter(r=>r.path==='/api/connection/connect').length),0);assert.equal(await page.evaluate(()=>window.__requests.find(r=>r.path==='/api/connection/resume').body.connectionId),'fixture');
+  await page.evaluate(()=>window.__droppedSocket.onclose?.({code:4001,reason:'PAGE_REPLACED'}));assert.equal(await page.locator('.page-status').textContent(),'在线');
+  checks.push({name:'control loss preserves video and draft, blocks input, waits for both channels and ignores late old closes'});
+  await drop('events');await page.waitForFunction(()=>document.querySelector('.page-status').textContent==='在线');checks.push({name:'observation socket loss also resumes the original session automatically'});
+  await page.evaluate(()=>{window.__requests=[];window.__resumeStatus=409;window.__resumeCode='PAGE_OFFLINE';});await drop('control');
+  await page.waitForFunction(()=>document.querySelector('.page-status').textContent==='已离线');await page.waitForTimeout(500);
+  assert.equal(await page.evaluate(()=>window.__requests.filter(r=>r.path==='/api/connection/connect').length),0);assert.equal(await page.locator('.text-input').inputValue(),'断线时保留的草稿');
+  checks.push({name:'lost ownership stops automatic recovery without taking over a different page'});
+  await page.evaluate(()=>{window.__resumeStatus=0;});await page.locator('.page-reconnect').click();await page.waitForFunction(()=>document.querySelector('.page-status').textContent==='在线');
+  await page.evaluate(()=>{window.__requests=[];window.__resumeStatus=503;window.__fastRecovery=true;});await drop('events');
+  await page.waitForFunction(()=>document.querySelector('.page-status').textContent==='已离线');assert.match(await page.locator('.connection-note').textContent(),/恢复连接超时/);
+  assert.equal(await page.evaluate(()=>window.__requests.filter(r=>r.path==='/api/connection/connect').length),0);checks.push({name:'bounded recovery timeout leaves manual reconnect available without replay'});
+  await page.evaluate(()=>{window.__resumeStatus=0;window.__fastRecovery=false;});await page.locator('.page-reconnect').click();await page.waitForFunction(()=>document.querySelector('.page-status').textContent==='在线');await page.evaluate(()=>window.__paintFrame());
   await mkdir('.local/ui-interactions',{recursive:true});
   await page.screenshot({path:'.local/ui-interactions/layout.png'});
   for(const [mode,timedOut]of [['gather-timeout',true],['gather-empty',false]]){

@@ -47,8 +47,8 @@ try {
     const fixtureMode=localStorage.getItem('fixture-mode');
     class FixtureSocket {
       readyState=1;
-      constructor(url){this.url=url;window.__sockets.push(this);setTimeout(()=>this.onopen?.({}),0);}
-      send(value){if(this.url.includes('/ws/control'))window.__messages.push(JSON.parse(value));}
+      constructor(url){this.url=url;window.__sockets.push(this);setTimeout(()=>{this.onopen?.({});const u=new URL(url),generation=Number(u.searchParams.get('generation')||0);const peers=window.__sockets.filter(s=>s.readyState===1&&new URL(s.url).searchParams.get('generation')===u.searchParams.get('generation')&&/\/ws\/(events|control)/.test(s.url));if(!window.__blockReady&&peers.some(s=>s.url.includes('/ws/events'))&&peers.some(s=>s.url.includes('/ws/control')))for(const s of peers)s.onmessage?.({data:JSON.stringify({type:'connection-ready',generation})});},0);}
+      send(value){if(JSON.parse(value).type==='heartbeat'){setTimeout(()=>this.onmessage?.({data:JSON.stringify({type:'heartbeat'})}),0);return;}if(this.url.includes('/ws/control'))window.__messages.push(JSON.parse(value));}
       close(){this.readyState=3;}
     }
     window.WebSocket=FixtureSocket;
@@ -81,7 +81,8 @@ try {
       }
       if(path==='/api/node/text'){window.__reads.push(JSON.parse(options.body));data={text:window.__phoneText};}
       if(path==='/api/tasks'){window.__taskRequests.push(JSON.parse(options.body));data={id:'fixture-script',startedAt:Date.now(),status:'completed',steps:0,logs:[],result:null};}
-      if(path==='/api/connection/connect')data={connectionId:'fixture'};
+      if(path==='/api/connection/connect')data={connectionId:'fixture',generation:0};
+      if(path==='/api/connection/resume')data={connectionId:'fixture',generation:(window.__resumeGeneration=(window.__resumeGeneration||0)+1)};
       if(path==='/api/app-state')data={collectedAt:Date.now(),catalog:{apps:[]},processes:[],navigation:{locked:false,current:null,tasks:[]}};
       if(path==='/api/webrtc/config')data={provider:'coturn',availableProviders:['coturn'],iceTransportPolicy:'relay',iceServers:[{urls:'turns:fixture.invalid:8443?transport=tcp'}],renewAfterMs:null};
       if(path==='/api/webrtc/config'&&JSON.parse(options.body).provider==='none')data={provider:'none',availableProviders:['none'],iceTransportPolicy:'all',iceServers:[],renewAfterMs:null};

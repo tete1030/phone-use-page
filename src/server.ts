@@ -14,7 +14,7 @@ import { Tasks } from './tasks.js';
 import { ConsoleError } from './types.js';
 import { render,readAssetVersion } from './ui.js';
 import { apiMethods,SDK_VERSION } from './sdk.js';
-import { PageConnections,type PageConnection } from './page-connections.js';
+import { PageConnections,RECOVERY_GRACE_MS,type PageConnection } from './page-connections.js';
 import {TouchControl} from './touch-control.js';
 import { AuthStore,configuredPassword } from './auth.js';
 import { installAuth } from './auth-http.js';
@@ -46,14 +46,16 @@ function syncVideoPower(){const state=device.state,reason=state.powerError||!sta
 device.on('power',syncVideoPower);device.on('observation',syncVideoPower);syncVideoPower();
 const app=Fastify({bodyLimit:262144,logger:false,trustProxy:trustedProxies||false});await app.register(cookie);await app.register(websocket,{options:{maxPayload:65536}});await app.register(statics,{root:resolve('dist/web'),prefix:endpoint('/assets/')});
 const audit=new Audit(resolve(process.env.AUTH_DATA_DIR||'.local/auth','../audit'));
-app.addHook('onResponse',async(req,reply)=>{const logged=auth.get(req.cookies[authHttp.cookieName]);const body=(req.body||{}) as any;audit.record({at:new Date().toISOString(),method:req.method,path:internalPath(req.url.split('?')[0]!,basePath),status:reply.statusCode,ip:req.ip,client:String(req.headers['user-agent']||'').slice(0,300),owner:(req as any).auditOwner,user:logged||req.url===endpoint('/api/login')&&reply.statusCode===200?'console':'anonymous',session:logged?.id,verification:(req as any).auditVerification,requestId:typeof body.requestId==='string'?body.requestId:undefined,action:typeof body.action==='string'?body.action:undefined,target:typeof body.target?.id==='string'?body.target.id:typeof body.packageName==='string'?body.packageName:undefined});});
+app.addHook('onResponse',async(req,reply)=>{const logged=auth.get(req.cookies[authHttp.cookieName]);const body=(req.body||{}) as any;audit.record({at:new Date().toISOString(),method:req.method,path:internalPath(req.url.split('?')[0]!,basePath),status:reply.statusCode,ip:req.ip,client:String(req.headers['user-agent']||'').slice(0,300),owner:(req as any).auditOwner,user:logged||req.url===endpoint('/api/login')&&reply.statusCode===200?'console':'anonymous',session:logged?.id,verification:(req as any).auditVerification,errorCode:(req as any).auditErrorCode,requestId:typeof body.requestId==='string'?body.requestId:undefined,action:typeof body.action==='string'?body.action:undefined,target:typeof body.target?.id==='string'?body.target.id:typeof body.packageName==='string'?body.packageName:undefined});});
 const controls=new Map<string,unknown>();
 const pages=new PageConnections();tasks.onActivity=owner=>{pages.requireOwner(owner);if(pages.idle(owner)){disconnect(pages.active!,'IDLE_TIMEOUT');throw new ConsoleError('PAGE_OFFLINE','5分钟无操作，已断开',409);}pages.activity(owner);};device.authorize=owner=>{pages.requireOwner(owner);if(!auth.getById(pages.active!.page.sessionId))throw new ConsoleError('LOGIN_REQUIRED','登录已失效',401);};
 let activationTail:Promise<unknown>=Promise.resolve();
 function serialized<T>(work:()=>Promise<T>){const next=activationTail.then(work);activationTail=next.catch(()=>{});return next;}
 async function cleanup(connection:PageConnection){tasks.revokeOwner(connection.owner);await rtc.close(connection.owner);await device.drain().catch(()=>{});await device.release(connection.owner).catch(()=>{});await device.setConnected(false);if(device.owner===connection.owner){device.owner=undefined;device.publish();}}
-function disconnect(connection:PageConnection,reason:string){if(pages.active!==connection)return;pages.disconnect(connection,reason);tasks.revokeOwner(connection.owner);void serialized(()=>cleanup(connection)).catch(()=>{});}
-const pageTimer=setInterval(()=>{const c=pages.active;if(c?.online){syncVideoPower();if(!auth.getById(c.page.sessionId))disconnect(c,'LOGIN_REQUIRED');else if(pages.idle(c.owner))disconnect(c,'IDLE_TIMEOUT');else if(Date.now()-c.lastSeen>45000)disconnect(c,'CONNECTION_TIMEOUT');}},1000);
+function connectionAudit(connection:PageConnection,action:string,reason:string){audit.record({at:new Date().toISOString(),method:'EVENT',path:'/connection',status:200,ip:'server',client:'server',owner:connection.owner,action,reason});}
+function disconnect(connection:PageConnection,reason:string){if(pages.active!==connection)return;connectionAudit(connection,'disconnected',reason);pages.disconnect(connection,reason);tasks.revokeOwner(connection.owner);void serialized(()=>cleanup(connection)).catch(()=>{});}
+function suspendConnection(connection:PageConnection,reason:string){if(!pages.suspend(connection))return;connectionAudit(connection,'recovering',reason);tasks.revokeOwner(connection.owner);void serialized(()=>device.drain()).catch(()=>{});}
+const pageTimer=setInterval(()=>{const c=pages.active;if(c?.online){syncVideoPower();if(!auth.getById(c.page.sessionId))disconnect(c,'LOGIN_REQUIRED');else if(pages.idle(c.owner))disconnect(c,'IDLE_TIMEOUT');else if(c.recoveringSince!==null){if(Date.now()-c.recoveringSince>=RECOVERY_GRACE_MS)disconnect(c,'RECOVERY_TIMEOUT');}else if(Date.now()-c.lastSeen>45000)suspendConnection(c,'CONNECTION_TIMEOUT');}},1000);
 const originAllowed=(origin:string|undefined,requestHost:string|undefined)=>{
   if(!origin)return false;try{const u=new URL(origin);return publicOrigin?origin===publicOrigin:u.host===requestHost;}catch{return false;}
 };
@@ -64,9 +66,9 @@ app.addHook('onRequest',async(req,reply)=>{
 });
 const authHttp=installAuth(app,auth,{secure:!!publicOrigin,cookiePath:process.env.CONSOLE_COOKIE_PATH||basePath,basePath,publicOrigin,assetVersion,onLogout:async s=>{const c=pages.active;if(c?.page.sessionId===s.id){pages.disconnect(c,'LOGGED_OUT');tasks.revokeOwner(c.owner);await serialized(()=>cleanup(c));}}});
 const authenticate=authHttp.authenticate;
-const session=(req:any,mutating=false)=>{const s=authenticate(req,mutating),id=req.headers['x-console-page']||(req.query as any)?.page;const token=req.headers['x-console-connection']||(req.query as any)?.connection;const connection=pages.require(typeof id==='string'?id:undefined,s.id,typeof token==='string'?token:undefined);if(pages.idle(connection.owner)){disconnect(connection,'IDLE_TIMEOUT');throw new ConsoleError('PAGE_OFFLINE','5分钟无操作，已断开',409);}(req as any).auditOwner=connection.owner;return {...s,owner:connection.owner,connection};};
-app.addHook('preSerialization',async(req,reply,payload)=>{if(payload&&typeof payload==='object'&&'verification' in payload)(req as any).auditVerification=(payload as any).verification;const path=internalPath(req.url,basePath);if(reply.statusCode<400&&path.startsWith('/api/')&&!['/api/login','/api/logout','/api/auth/status','/api/connection/connect'].includes(path))session(req);return payload;});
-app.setErrorHandler((error:any,_req,reply)=>reply.code(error instanceof ConsoleError?error.status:error instanceof z.ZodError||error.validation?400:500).send({error:{code:error instanceof z.ZodError?'INVALID_REQUEST':error.code||'SERVER_ERROR',message:error.message},...(error.execution?{execution:error.execution,verification:error.verification}:{})}));
+const session=(req:any,mutating=false,allowRecovery=false)=>{const s=authenticate(req,mutating),id=req.headers['x-console-page']||(req.query as any)?.page;const token=req.headers['x-console-connection']||(req.query as any)?.connection;const connection=pages.require(typeof id==='string'?id:undefined,s.id,typeof token==='string'?token:undefined,allowRecovery);if(mutating)pages.requireGeneration(connection,Number(req.headers['x-console-generation']));if(pages.idle(connection.owner)){disconnect(connection,'IDLE_TIMEOUT');throw new ConsoleError('IDLE_TIMEOUT','5分钟无操作，已断开',409);}(req as any).auditOwner=connection.owner;return {...s,owner:connection.owner,connection};};
+app.addHook('preSerialization',async(req,reply,payload)=>{if(payload&&typeof payload==='object'&&'verification' in payload)(req as any).auditVerification=(payload as any).verification;const path=internalPath(req.url,basePath);if(reply.statusCode<400&&path.startsWith('/api/')&&!['/api/login','/api/logout','/api/auth/status','/api/connection/connect','/api/connection/resume'].includes(path))session(req);return payload;});
+app.setErrorHandler((error:any,req,reply)=>{(req as any).auditErrorCode=error.code||'SERVER_ERROR';return reply.code(error instanceof ConsoleError?error.status:error instanceof z.ZodError||error.validation?400:500).send({error:{code:error instanceof z.ZodError?'INVALID_REQUEST':error.code||'SERVER_ERROR',message:error.message},...(error.execution?{execution:error.execution,verification:error.verification}:{})});});
 app.get('/health',()=>({ok:true,sdk:SDK_VERSION}));
 if(basePath!=='/')app.get(endpoint('/health'),()=>({ok:true,sdk:SDK_VERSION}));
 app.get(endpoint('/'),async(req,reply)=>{
@@ -76,7 +78,12 @@ app.get(endpoint('/'),async(req,reply)=>{
 app.post(endpoint('/api/connection/connect'),async req=>{
   const s=authenticate(req,true),p=z.object({pageId:z.string().uuid(),explicit:z.boolean().default(false)}).parse(req.body);
   return serialized(async()=>{const {connection,previous}=pages.begin(p.pageId,s.id,p.explicit);const stopped=previous?tasks.revokeOwner(previous.owner):0;
-    if(previous)await cleanup(previous);pages.complete(connection);try{await device.setConnected(true);}catch(error){disconnect(connection,'INIT_FAILED');throw error;}return {online:true,connectionId:connection.owner,stoppedPreviousTasks:stopped};});
+    if(previous)await cleanup(previous);pages.complete(connection);try{await device.setConnected(true);}catch(error){disconnect(connection,'INIT_FAILED');throw error;}(req as any).auditOwner=connection.owner;return {online:true,connectionId:connection.owner,generation:connection.generation,stoppedPreviousTasks:stopped};});
+});
+app.post(endpoint('/api/connection/resume'),async req=>{
+  const s=authenticate(req,true),p=z.object({pageId:z.string().uuid(),connectionId:z.string().uuid(),videoAttemptId:z.string().uuid().optional()}).strict().parse(req.body);
+  const connection=pages.require(p.pageId,s.id,p.connectionId,true);suspendConnection(connection,'CLIENT_RECONNECT');
+  return serialized(async()=>{const current=pages.resume(p.pageId,s.id,p.connectionId);await rtc.retain(current.owner,p.videoAttemptId);pages.require(p.pageId,s.id,p.connectionId,true);(req as any).auditOwner=current.owner;connectionAudit(current,'resume_attempt','ORIGINAL_SESSION');return {connectionId:current.owner,generation:current.generation,graceMs:RECOVERY_GRACE_MS};});
 });
 app.get(endpoint('/api/observation'),async req=>{session(req);return device.state;});
 installWebRtcRoutes(app,endpoint,session,rtc);
@@ -112,25 +119,27 @@ app.post(endpoint('/api/tasks'),async req=>{const s=session(req,true);const p=z.
 app.post(endpoint('/api/tasks/:id/stop'),async req=>{const s=session(req,true);return publicTask(tasks.stop((req.params as any).id,s.owner),s.owner);});
 app.get(endpoint('/tasks/:id'),async(req,reply)=>{const s=session(req);const t=tasks.records.get((req.params as any).id);if(!t)throw new ConsoleError('TASK_NOT_FOUND','任务不存在',404);return reply.type('text/html').send('<!doctype html><meta charset="utf-8"><title>脚本任务结果</title><a href="'+endpoint('/')+'">返回控制台</a><pre>'+escape(JSON.stringify(publicTask(t,s.owner),null,2))+'</pre>');});
 app.get(endpoint('/observe'),async(req,reply)=>{session(req);return reply.type('text/html').send('<!doctype html><meta charset="utf-8"><title>安卓观察</title><a href="'+endpoint('/')+'">控制台</a><pre>'+escape(JSON.stringify(device.state,null,2))+'</pre>');});
+function websocketAudit(req:any,path:string,owner:string|undefined,action:string,closeCode?:number,reason?:string){audit.record({at:new Date().toISOString(),method:'EVENT',path,status:200,ip:req.ip,client:String(req.headers['user-agent']||'').slice(0,300),owner,action,closeCode,reason:reason?.slice(0,120)});}
+function rejectSocket(ws:any,error:any){const reason=error.code||'ORIGIN_REJECTED';ws.send(JSON.stringify({type:reason==='STALE_TRANSPORT'?'recovering':'offline',reason}));ws.close(4001,reason);}
 app.get(endpoint('/ws/events'),{websocket:true},(ws,req)=>{
-  try{const s=session(req);if(!originAllowed(req.headers.origin,req.headers.host))throw new Error('Origin rejected');
-    pages.attach(s.connection,ws);
+  try{const s=session(req,false,true);if(!originAllowed(req.headers.origin,req.headers.host))throw new ConsoleError('ORIGIN_REJECTED','Origin rejected',403);
+    pages.attachChannel(s.connection,ws,'events',Number((req.query as any).generation??0));websocketAudit(req,'/ws/events',s.owner,'ws_open');
     const observation=(state:unknown)=>{if(ws.readyState===1){if(ws.bufferedAmount>1_000_000){ws.close(1013);return;}ws.send(JSON.stringify({type:'observation',state,ownsControl:device.owner===s.owner,controlAllowed:device.canClaim(s.owner),taskBusy:!!device.activeTask}));}};
     const task=(t:any)=>{if(ws.readyState===1)ws.send(JSON.stringify({type:'task',task:publicTask(t,s.owner)}));};
-    ws.on('message',()=>{try{pages.heartbeat(s.owner);}catch{ws.close(4001,'PAGE_REPLACED');}});
+    ws.on('message',()=>{try{if(s.connection.channels.get('events')!==ws)return;pages.heartbeat(s.owner);ws.send(JSON.stringify({type:'heartbeat'}));}catch{ws.close(4001,'PAGE_REPLACED');}});
     ws.send(JSON.stringify({type:'tasks',tasks:tasks.latest().map(t=>publicTask(t,s.owner))}));
     const power=(data:unknown)=>{if(ws.readyState===1)ws.send(JSON.stringify({type:'power',...data as object}));};device.on('power',power);
-    observation(device.state);device.on('observation',observation);tasks.on('task',task);ws.once('close',()=>{device.off('observation',observation);device.off('power',power);tasks.off('task',task);disconnect(s.connection,'CONNECTION_CLOSED');});
-  }catch{ws.close(1008,'Authentication required');}
+    observation(device.state);device.on('observation',observation);tasks.on('task',task);ws.once('close',(code,reason)=>{websocketAudit(req,'/ws/events',s.owner,'ws_close',code,String(reason));device.off('observation',observation);device.off('power',power);tasks.off('task',task);if(pages.lostChannel(s.connection,ws,'events'))suspendConnection(s.connection,'EVENTS_CLOSED');});
+  }catch(error){websocketAudit(req,'/ws/events',undefined,'ws_rejected',undefined,(error as any).code);rejectSocket(ws,error);}
 });
 installWssVideoRoute(app,endpoint,{session,originAllowed,pages,rtc,video:device.video,serialize:serialized,parallel:rtc});
 app.get(endpoint('/ws/control'),{websocket:true},(ws,req)=>{
-  let s:ReturnType<typeof session>;try{s=session(req);if(!originAllowed(req.headers.origin,req.headers.host))throw new Error();pages.attach(s.connection,ws);}catch{ws.close(1008);return;}
+  let s:ReturnType<typeof session>;try{s=session(req,false,true);if(!originAllowed(req.headers.origin,req.headers.host))throw new ConsoleError('ORIGIN_REJECTED','Origin rejected',403);pages.attachChannel(s.connection,ws,'control',Number((req.query as any).generation??0));websocketAudit(req,'/ws/control',s.owner,'ws_open');}catch(error){websocketAudit(req,'/ws/control',undefined,'ws_rejected',undefined,(error as any).code);rejectSocket(ws,error);return;}
   const touch=new TouchControl(device,s.owner,data=>{if(ws.readyState===1)ws.send(JSON.stringify(data));},Date.now,()=>{if(controls.get(s.owner)!==ws||ws.readyState!==1)throw new ConsoleError('CONTROL_REPLACED','控制通道已更换，旧手势未重放',409);});
   const previous=controls.get(s.owner) as typeof ws|undefined;if(previous&&previous!==ws)previous.close(4001,'CONTROL_REPLACED');controls.set(s.owner,ws);let tail=Promise.resolve(),inputEpoch=0;
-  ws.on('message',data=>{try{pages.requireOwner(s.owner);}catch{ws.close(4001,'PAGE_REPLACED');return;}let p:any;try{p=JSON.parse(String(data));}catch{ws.close(1003,'Invalid JSON');return;}
+  ws.on('message',data=>{if(controls.get(s.owner)!==ws)return;try{pages.requireOwner(s.owner);}catch{ws.close(4002,'CONNECTION_RECOVERING');return;}let p:any;try{p=JSON.parse(String(data));}catch{ws.close(1003,'Invalid JSON');return;}
     if(pages.idle(s.owner)){disconnect(s.connection,'IDLE_TIMEOUT');return;}
-    if(p.type==='heartbeat'){pages.heartbeat(s.owner);device.heartbeat(s.owner);return;}
+    if(p.type==='heartbeat'){pages.heartbeat(s.owner);device.heartbeat(s.owner);ws.send(JSON.stringify({type:'heartbeat'}));return;}
     if(p.type==='keys-release'){if(device.owner===s.owner&&!device.activeTask)void device.video.releaseKeys().catch(()=>{});return;}
     if(p.type==='touch-keepalive'){if(typeof p.gesture==='string')touch.keepalive(p.gesture);return;}
     if(p.type==='touch-cancel'){void touch.cancel(typeof p.gesture==='string'?p.gesture:undefined);return;}
@@ -145,7 +154,7 @@ app.get(endpoint('/ws/control'),{websocket:true},(ws,req)=>{
     if(p.kind!=='move')audit.record({at:new Date().toISOString(),method:'EVENT',path:'/ws/control',status:200,ip:req.ip,client:String(req.headers['user-agent']||'').slice(0,300),owner:s.owner,requestId:typeof p.request==='string'?p.request.slice(0,64):undefined,action:p.type,verification:'not_verified'});
     if(ws.readyState===1)ws.send(JSON.stringify({type:'ack',kind:p.kind,request:p.request,execution:'sent',verification:'not_verified',backend:device.video.keyboardBackend}));
   })).catch(error=>{if(ws.readyState===1)ws.send(JSON.stringify({type:'error',message:String(error)}));});});
-  ws.once('close',()=>{inputEpoch++;void touch.close().catch(()=>{});if(controls.get(s.owner)===ws){controls.delete(s.owner);if(!device.activeTask)void device.release(s.owner).catch(()=>{});}});
+  ws.once('close',(code,reason)=>{websocketAudit(req,'/ws/control',s.owner,'ws_close',code,String(reason));inputEpoch++;void touch.close().catch(()=>{});if(controls.get(s.owner)===ws)controls.delete(s.owner);if(pages.lostChannel(s.connection,ws,'control'))suspendConnection(s.connection,'CONTROL_CLOSED');});
 });
 function publicTask(t:any,owner:string){const {owner:taskOwner,code,...rest}=t;return {...rest,canStop:taskOwner===owner,code:taskOwner===owner?code:undefined};}
 function escape(s:string){return s.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;');}
