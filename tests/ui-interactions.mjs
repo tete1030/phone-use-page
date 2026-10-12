@@ -34,6 +34,7 @@ try {
     window.__messages=[];
     window.__sockets=[];
     window.__offers=0;
+    window.__videoSelections=0;
     setInterval(()=>{for(const socket of window.__sockets)if(socket.url.includes('/ws/events'))socket.onmessage?.({data:JSON.stringify({type:'power',screenOn:true,locked:false,powerCollectedAt:Date.now()})});},1000);
     window.__clockOffset=0;
     const nativeNow=performance.now.bind(performance);
@@ -71,6 +72,7 @@ try {
       if(path==='/api/webrtc/config'&&fixtureMode)data={...data,provider:'cloudflare',availableProviders:['cloudflare'],gatherMs:50};
       if(path==='/api/webrtc/offer'){window.__offers++;data={width:864,height:1920,sdp:''};}
       if(path==='/api/webrtc/status')data={state:'connected',fixture:true};
+      if(path==='/api/video/select')window.__videoSelections++;
       return new Response(JSON.stringify(data),{status:200,headers:{'Content-Type':'application/json'}});
     };
   });
@@ -107,6 +109,15 @@ try {
   }
   function lastPoint(trace){return {x:trace.at(-1).x,y:trace.at(-1).y};}
   const right={x:rectangle.x+rectangle.width+140,y:center.y};
+  const selectionsBeforeTouch=await page.evaluate(()=>window.__videoSelections);
+  await page.mouse.move(center.x,center.y);await page.mouse.down();
+  assert.equal(await page.locator('.phone').evaluate(p=>getComputedStyle(p).opacity),'1');
+  assert.equal(await page.locator('.screen-shield').isVisible(),false);
+  await page.mouse.up();
+  assert.equal(await page.evaluate(()=>window.__videoSelections),selectionsBeforeTouch);
+  assert.equal(await page.locator('.phone').evaluate(p=>getComputedStyle(p).webkitTapHighlightColor),'rgba(0, 0, 0, 0)');
+  const disabledOpacity=await page.locator('.phone').evaluate(p=>{p.disabled=true;const opacity=getComputedStyle(p).opacity;p.disabled=false;return opacity;});
+  assert.equal(disabledOpacity,'1');checks.push({name:'touch preserves video selection and screen brightness, including disabled state'});
   assert.equal((await drag('outside right',right)).at(-1).x,863);
   assert.equal((await drag('outside left',{x:Math.max(1,rectangle.x-15),y:center.y})).at(-1).x,0);
   assert.equal((await drag('outside top',{x:center.x,y:rectangle.y-15})).at(-1).y,0);

@@ -27,6 +27,11 @@ test('a held gesture defers promotion until release and still cancels a failed a
   assert.equal(f.race.active?.provider,'wss');assert.equal(f.last('wss').closed,false);f.race.holdSelection(false);assert.equal(f.race.active?.provider,'coturn');
   f.race.holdSelection(true);f.last('coturn').failed('lost');assert.equal(f.race.active,undefined);f.race.holdSelection(false);f.race.stop();
 });
+test('releasing a gesture without a better candidate leaves the current video untouched',()=>{
+  const f=raceFixture();f.race.start();f.last('coturn').ready();const active=f.race.active;
+  for(let i=0;i<3;i++){f.race.holdSelection(true);f.race.holdSelection(false);}
+  assert.equal(f.race.active,active);assert.deepEqual(f.selected,['coturn']);assert.equal(f.last('coturn').closed,false);f.race.stop();
+});
 
 function backend(){let issued=0,revoked=0;const config=rtcConfig({WEBRTC_TURN_PROVIDER:'coturn',COTURN_KEY_FILE:'home',COTURN_URL:'turns:home.example.com:8443?transport=tcp',WEBRTC_TURN_FALLBACK:'cloudflare',CF_TURN_KEY_FILE:'cloud',WEBRTC_TURN_TTL_SECONDS:'600',VIDEO_WSS_FALLBACK:'1'});
   const home=new TurnCredentials(config.turn,config.stunUrl,{secret:'a'.repeat(64)}),cloud=new TurnCredentials(config.fallbackTurn!,config.stunUrl,{keyId:'b'.repeat(32),apiToken:'c'.repeat(64)},async url=>{

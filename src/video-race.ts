@@ -37,6 +37,7 @@ export class VideoRace<T extends RaceHandle>{
     if(this.held&&this.active){this.options.changed();return;}this.promote(slot);
   }
   private promote(slot:RaceSlot<T>){
+    if(this.active===slot)return;
     if(!this.active||this.providers.indexOf(slot.provider)<this.providers.indexOf(this.active.provider)||this.active.provider===slot.provider){
       const previous=this.active;this.active=slot;this.options.selected(slot);if(previous&&previous!==slot)this.retire(previous);
       for(const other of [...this.slots.values()])if(this.providers.indexOf(other.provider)>this.providers.indexOf(slot.provider))this.retire(other);

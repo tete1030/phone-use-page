@@ -275,7 +275,8 @@ body{background:#f5f7fc}
 #android-observable .video-network-panel{position:absolute;bottom:48px;left:6px;width:calc(100% - 12px);max-height:300px;display:flex;flex-direction:column;box-sizing:border-box;border:1px solid var(--as-line);background:var(--as-panel);color:var(--as-text);box-shadow:0 4px 18px #25384b1a}
 #android-observable .video-network-toolbar{display:flex;align-items:center;gap:8px;flex:none;padding:5px 8px;border-bottom:1px solid var(--as-line)}
 #android-observable .video-network-data{min-height:0;overflow:auto;box-sizing:border-box;margin:0;padding:8px;white-space:pre-wrap;overflow-wrap:anywhere;font:11px/1.5 'IBM Plex Mono',monospace}
-#android-observable .phone{user-select:none;-webkit-user-select:none}
+#android-observable .phone{user-select:none;-webkit-user-select:none;-webkit-tap-highlight-color:transparent}
+#android-observable .phone:disabled{opacity:1}
 
 #android-observable .text-target-row{display:flex;align-items:center;gap:6px;padding:0 6px;font-size:11px;min-width:0}
 #android-observable .text-target{min-width:0;flex:1;font:inherit;color:var(--as-text);background:var(--as-panel);border:1px solid var(--as-line)}
