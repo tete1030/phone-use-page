@@ -285,6 +285,7 @@ body{background:#f5f7fc}
 
 #android-observable .phone-pane,#android-observable .phone-stage,#android-observable .phone{min-width:0}
 #android-observable .phone{-webkit-touch-callout:none;flex-shrink:0}
+#android-observable .phone-pane{touch-action:none;-webkit-touch-callout:none}
 #android-observable .mobile-header,#android-observable .mobile-tools,#android-observable .mobile-tools-close{display:none}
 #android-observable .phone-pane.enlarged{inset:0;padding:max(8px,env(safe-area-inset-top)) max(8px,env(safe-area-inset-right)) max(8px,env(safe-area-inset-bottom)) max(8px,env(safe-area-inset-left));grid-template-rows:36px minmax(0,1fr) 48px;box-sizing:border-box}
 #android-observable .phone-pane.enlarged .mobile-header{display:flex;align-items:center;padding-right:105px;font-size:13px}

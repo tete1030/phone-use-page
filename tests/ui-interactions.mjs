@@ -35,6 +35,7 @@ try {
     window.__sockets=[];
     window.__offers=0;
     window.__videoSelections=0;
+    window.__requests=[];
     setInterval(()=>{for(const socket of window.__sockets)if(socket.url.includes('/ws/events'))socket.onmessage?.({data:JSON.stringify({type:'power',screenOn:true,locked:false,powerCollectedAt:Date.now()})});},1000);
     window.__clockOffset=0;
     const nativeNow=performance.now.bind(performance);
@@ -65,6 +66,7 @@ try {
     window.fetch=async(url,options)=>{
       const path=new URL(url,location.href).pathname;
       if(!path.startsWith('/api/'))return originalFetch(url,options);
+      window.__requests.push({path,body:options?.body?JSON.parse(options.body):null});
       let data={};
       if(path==='/api/connection/connect')data={connectionId:'fixture'};
       if(path==='/api/app-state')data={collectedAt:Date.now(),catalog:{apps:[]},processes:[],navigation:{locked:false,current:null,tasks:[]}};
@@ -118,6 +120,47 @@ try {
   assert.equal(await page.locator('.phone').evaluate(p=>getComputedStyle(p).webkitTapHighlightColor),'rgba(0, 0, 0, 0)');
   const disabledOpacity=await page.locator('.phone').evaluate(p=>{p.disabled=true;const opacity=getComputedStyle(p).opacity;p.disabled=false;return opacity;});
   assert.equal(disabledOpacity,'1');checks.push({name:'touch preserves video selection and screen brightness, including disabled state'});
+  const phoneBox=await page.locator('.phone').boundingBox();
+  const bufferStarts={bottom:{x:center.x,y:phoneBox.y+phoneBox.height+1},top:{x:center.x,y:phoneBox.y-1},left:{x:phoneBox.x-3,y:center.y},right:{x:phoneBox.x+phoneBox.width+3,y:center.y}};
+  for(const [edge,start]of Object.entries(bufferStarts)){
+    await reset();await page.mouse.move(start.x,start.y);await page.mouse.down();
+    assert.equal((await touches()).length,0,edge+' buffer waits before sending DOWN');
+    await page.mouse.move(center.x,center.y,{steps:3});await page.mouse.up();await page.waitForTimeout(40);
+    const trace=await touches();assert.equal(trace[0]?.action,0,edge+' entry DOWN');assert.equal(trace.at(-1)?.action,1,edge+' entry UP');
+    assert.equal(edge==='bottom'?trace[0].y:edge==='top'?trace[0].y:trace[0].x,edge==='bottom'?1919:edge==='right'?863:0,edge+' starts at phone boundary');
+    assert.ok(trace.some(p=>p.action===2),edge+' keeps inward MOVE');
+  }
+  assert.deepEqual(await page.locator('.phone').boundingBox(),phoneBox);checks.push({name:'all four existing blank margins accept inward drag without changing layout'});
+  await reset();await page.mouse.click(bufferStarts.left.x,bufferStarts.left.y);assert.equal((await touches()).length,0);
+  await page.mouse.move(bufferStarts.left.x,bufferStarts.left.y);await page.mouse.down();await page.mouse.move(rectangle.x+1,center.y);await page.mouse.up();assert.equal((await touches()).length,0);
+  await page.mouse.move(bufferStarts.left.x,bufferStarts.left.y);await page.mouse.down();await page.mouse.move(bufferStarts.left.x,center.y+30);await page.mouse.up();assert.equal((await touches()).length,0);
+  checks.push({name:'buffer tap, tiny motion and parallel motion send no phone events'});
+  await reset();await page.mouse.move(bufferStarts.bottom.x,bufferStarts.bottom.y);await page.mouse.down();await page.waitForTimeout(750);
+  assert.equal((await touches()).length,0);await page.mouse.move(center.x,center.y);await page.mouse.up();
+  assert.equal((await touches())[0]?.t,0);checks.push({name:'waiting outside the screen never becomes a phone long press'});
+  await reset();await page.mouse.move(bufferStarts.left.x,bufferStarts.left.y);await page.mouse.down();await page.evaluate(()=>window.dispatchEvent(new Event('blur')));
+  await page.mouse.move(center.x,center.y);await page.mouse.up();assert.equal((await touches()).length,0);checks.push({name:'blur cancels a pending entry without sending or replaying it'});
+  const home=page.locator('.nav [data-press="HOME"]'),homeBox=await home.boundingBox();await reset();await page.evaluate(()=>window.__requests=[]);
+  await home.click();assert.equal((await touches()).length,0);assert.ok(await page.evaluate(()=>window.__requests.some(r=>r.path==='/api/press'&&r.body?.key==='HOME')));
+  await reset();await page.mouse.move(homeBox.x+homeBox.width/2,homeBox.y+2);await page.mouse.down();await page.mouse.move(center.x,center.y);await page.mouse.up();assert.equal((await touches()).length,0);
+  checks.push({name:'nearby navigation clicks work and drags starting on controls are never stolen'});
+  await reset();await page.evaluate(({x,y})=>{
+    const pane=document.querySelector('.phone-pane');pane.dispatchEvent(new PointerEvent('pointerdown',{pointerId:780,button:0,clientX:x-40,clientY:y,bubbles:true}));
+    document.dispatchEvent(new PointerEvent('pointermove',{pointerId:780,clientX:x+30,clientY:y,bubbles:true}));document.dispatchEvent(new PointerEvent('pointerup',{pointerId:780,clientX:x+30,clientY:y,bubbles:true}));
+  },{x:rectangle.x,y:center.y});assert.equal((await touches()).length,0);checks.push({name:'drags starting beyond the buffer cannot become phone gestures'});
+  await reset();await page.mouse.move(bufferStarts.left.x,bufferStarts.left.y);await page.mouse.down();await page.mouse.move(rectangle.x-25,center.y);await page.mouse.move(center.x,center.y);await page.mouse.up();
+  assert.equal((await touches()).length,0);checks.push({name:'leaving the buffer before entry permanently abandons that pointer'});
+  await reset();await page.evaluate(({x,y})=>{
+    document.querySelector('.phone-pane').dispatchEvent(new PointerEvent('pointerdown',{pointerId:781,button:0,clientX:x-3,clientY:y,bubbles:true}));
+    document.dispatchEvent(new PointerEvent('pointerup',{pointerId:781,clientX:x+30,clientY:y,bubbles:true}));
+  },{x:rectangle.x,y:center.y});assert.deepEqual((await touches()).map(p=>p.action),[0,2,1]);checks.push({name:'fast buffer entry at release keeps boundary DOWN, final MOVE and UP'});
+  await reset();await page.mouse.move(phoneBox.x-3,phoneBox.y-1);await page.mouse.down();await page.mouse.move(rectangle.x+40,rectangle.y+40);await page.mouse.up();
+  const corner=(await touches())[0];assert.equal(corner?.action,0);assert.ok(corner.x<1e-6||corner.y<1e-6);checks.push({name:'diagonal entry starts at the first crossed edge'});
+  const controlPoint={x:bufferStarts.left.x,y:center.y};
+  await page.evaluate(({x,y})=>{const b=document.createElement('button');b.type='button';b.className='buffer-test-control';b.textContent='控件';b.style.cssText=`position:fixed;left:${x-3}px;top:${y-6}px;width:6px;height:12px;min-height:0;padding:0;z-index:30`;window.__bufferControlClicks=0;b.onclick=()=>window.__bufferControlClicks++;document.querySelector('.phone-pane').append(b);},controlPoint);
+  await reset();await page.mouse.click(controlPoint.x,controlPoint.y);assert.equal(await page.evaluate(()=>window.__bufferControlClicks),1);
+  await page.mouse.move(controlPoint.x,controlPoint.y);await page.mouse.down();await page.mouse.move(center.x,center.y);await page.mouse.up();assert.equal((await touches()).length,0);
+  await page.evaluate(()=>document.querySelector('.buffer-test-control').remove());checks.push({name:'a real control within the geometric buffer keeps its own clicks and drags'});
   assert.equal((await drag('outside right',right)).at(-1).x,863);
   assert.equal((await drag('outside left',{x:Math.max(1,rectangle.x-15),y:center.y})).at(-1).x,0);
   assert.equal((await drag('outside top',{x:center.x,y:rectangle.y-15})).at(-1).y,0);
@@ -247,6 +290,13 @@ try {
   }
   await page.setViewportSize({width:390,height:844});await page.waitForTimeout(100);await page.evaluate(()=>window.__paintFrame());
   const cdp=await context.newCDPSession(page),box=await page.locator('.video-canvas').boundingBox(),tx=box.x+box.width/2,ty=box.y+box.height/2;
+  const mobilePhoneBox=await page.locator('.phone').boundingBox(),bufferY=mobilePhoneBox.y+mobilePhoneBox.height+1;
+  await reset();await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:tx,y:bufferY,id:1}]});await cdp.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});assert.equal((await touches()).length,0);
+  checks.push({name:'native tap retargeted near the screen remains a buffer tap without phone input'});
+  await reset();await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:tx,y:bufferY,id:1}]});assert.equal((await touches()).length,0);
+  await cdp.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x:tx,y:box.y+box.height-35,id:1}]});await cdp.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
+  const entryFinger=await touches();assert.equal(entryFinger[0]?.action,0);assert.equal(entryFinger[0]?.y,1919);assert.ok(entryFinger.some(p=>p.action===2));assert.equal(entryFinger.at(-1)?.action,1);
+  assert.equal(await page.evaluate(()=>scrollY),0);checks.push({name:'native finger drag from the bottom margin enters at the remote screen edge'});
   await reset();await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:tx,y:ty,id:1}]});
   await cdp.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x:tx+20,y:ty+30,id:1}]});await cdp.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
   const finger=await touches();assert.equal(finger[0].action,0);assert.ok(finger.some(m=>m.action===2));assert.equal(finger.at(-1).action,1);

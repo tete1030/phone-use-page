@@ -96,7 +96,7 @@ async function initialize() {
   // Frame freshness is a display warning, not an input gate: a still screen may
   // need a touch before producing another frame after unlock.
   const touchReady=()=>touchBlockedReason()===null;
-  function fit(){if(touch?.active())touch.cancel('页面尺寸已变化，手势已释放');app.style.transform='none';root.style.width='100%';root.style.height=(visualViewport?.height||innerHeight)+'px';fitPhone();}
+  function fit(){touch?.cancel(touch.active()?'页面尺寸已变化，手势已释放':undefined);app.style.transform='none';root.style.width='100%';root.style.height=(visualViewport?.height||innerHeight)+'px';fitPhone();}
   addEventListener('resize',fit);addEventListener('orientationchange',fit);visualViewport?.addEventListener('resize',fit);
   function fitPhone(){if(touch?.active())return;const stage=q<HTMLElement>('.phone-stage');const ratio=meta.width&&meta.height?meta.width/meta.height:observation.width/observation.height;
     if(!Number.isFinite(ratio)||ratio<=0)return;
@@ -199,7 +199,7 @@ async function initialize() {
   phone.addEventListener('keydown',e=>{if(e.key==='Escape'){e.preventDefault();text.focus();void releaseInput();return;}if(e.key==='Tab')return;if(e.isComposing||e.key==='Process'){log('中文请在网页草稿框填写，再点击“填写到手机”');return;}const code=keyCode(e);if(code===undefined||!interactive()||control?.readyState!==1||!observation.controlAvailable)return;e.preventDefault();if(!observation.focus&&((code>=29&&code<=54)||code===67))log('未确认文字焦点；当前仅发送原始硬件按键，文字效果未验证');if(!controlAllowed||appsBusy){log('设备忙，按键未发送');return;}const repeat=(held.get(e.code)?.repeat??-1)+1;held.set(e.code,{code,repeat});control.send(JSON.stringify({type:'key',request:crypto.randomUUID(),action:0,code,meta:metaKeys(e),repeat}));});
   phone.addEventListener('keyup',e=>{const previous=held.get(e.code);if(!previous)return;e.preventDefault();held.delete(e.code);if(control?.readyState===1)control.send(JSON.stringify({type:'key',request:crypto.randomUUID(),action:1,code:previous.code,meta:metaKeys(e),repeat:0}));});
   function showTouch(x:number,y:number){const mark=q<HTMLElement>('.touch-marker');mark.hidden=false;mark.style.left=x/meta.width*100+'%';mark.style.top=y/meta.height*100+'%';setTimeout(()=>mark.hidden=true,600);}
-  touch=installTouch({element:phone,geometry:()=>{const r=canvas.getBoundingClientRect(),ratio=meta.width/meta.height,w=Math.min(r.width,r.height*ratio),h=w/ratio;return {width:meta.width,height:meta.height,left:r.left+(r.width-w)/2,top:r.top+(r.height-h)/2,displayWidth:w,displayHeight:h};},
+  touch=installTouch({element:phone,bufferElement:phonePane,bufferMargin:20,geometry:()=>{const r=canvas.getBoundingClientRect(),ratio=meta.width/meta.height,w=Math.min(r.width,r.height*ratio),h=w/ratio;return {width:meta.width,height:meta.height,left:r.left+(r.width-w)/2,top:r.top+(r.height-h)/2,displayWidth:w,displayHeight:h};},
     canStart:touchReady,
     canContinue:()=>interactive()&&control?.readyState===1&&observation.controlAvailable&&!taskBusy&&!appsBusy&&!!videoManager?.active(),
     unavailable:()=>{if(online&&powerKnown()&&(!observation.screenOn||observation.locked!==false)&&!waking)void wakePhone();else log((touchBlockedReason()||'触摸暂不可用')+'，触摸未发送');},
