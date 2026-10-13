@@ -5,6 +5,7 @@ import os
 import tempfile
 import sys
 import unittest
+from xml.sax.saxutils import quoteattr
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -25,6 +26,10 @@ class DeviceFixture:
     window = 'fixture u0 package/Activity'
     text = '原始文本'
     password = False
+    bounds = [10, 10, 500, 100]
+    resource = 'package:id/input'
+    parent_class = 'android.widget.LinearLayout'
+    focused = True
 
     @property
     def jsonrpc(self):
@@ -32,17 +37,30 @@ class DeviceFixture:
             if selector.get('className') and selector['className'] != getattr(self, 'actual_class', 'android.widget.EditText'):
                 raise RuntimeError('Native target no longer matches the old class')
             return self.text
-        return SimpleNamespace(getText=native_text, dumpWindowHierarchy=lambda *args, **kwargs: self.dump_hierarchy())
+        def write(selector, text):
+            self.writes = getattr(self, 'writes', []) + [text]
+            self.text = text
+            if hasattr(self, 'on_write'):
+                self.on_write()
+            return True
+        return SimpleNamespace(getText=native_text, setText=write, clearTextField=lambda selector: write(selector, ''), dumpWindowHierarchy=lambda *args, **kwargs: self.dump_hierarchy())
 
     def shell(self, command):
         value = 'mCurrentFocus=Window{' + self.window + '}' if isinstance(command, str) and 'mCurrentFocus' in command else 'mIsShowing=false' if isinstance(command, str) else 'mWakefulness=Awake'
         return SimpleNamespace(output=value)
 
     def dump_hierarchy(self, **kwargs):
-        return '<hierarchy><node class="android.widget.LinearLayout" package="package" bounds="[0,0][1080,2400]" enabled="true" clickable="true"><node class="android.widget.EditText" resource-id="package:id/input" package="package" text="' + self.text + '" content-desc="' + self.text + '" focused="true" password="' + str(self.password).lower() + '" enabled="true" bounds="[10,10][500,100]" /></node></hierarchy>'
+        bounds = '[%d,%d][%d,%d]' % tuple(self.bounds)
+        return ('<hierarchy><node class="' + self.parent_class + '" package="package" bounds="[0,0][1080,2400]" enabled="true" clickable="true">'
+                '<node class="' + getattr(self, 'actual_class', 'android.widget.EditText') + '" resource-id="' + self.resource + '" package="package" text=' + quoteattr(self.text) +
+                ' content-desc=' + quoteattr(self.text if self.resource else '') + ' focused="' + str(self.focused).lower() + '" password="' + str(self.password).lower() +
+                '" enabled="true" bounds="' + bounds + '" /></node></hierarchy>')
 
     def __call__(self, **kwargs):
-        return SimpleNamespace(count=1, selector=kwargs, info={'className': getattr(self,'actual_class','android.widget.EditText'), 'resourceName': 'package:id/input', 'packageName': 'package', 'text': self.text, 'bounds': {'left': 10, 'top': 10, 'right': 500, 'bottom': 100}})
+        left, top, right, bottom = self.bounds
+        return SimpleNamespace(count=2 if getattr(self, 'ambiguous', False) else 1, selector=kwargs,
+                               info={'className': getattr(self,'actual_class','android.widget.EditText'), 'resourceName': self.resource, 'packageName': 'package',
+                                     'password': self.password, 'text': self.text, 'bounds': {'left': left, 'top': top, 'right': right, 'bottom': bottom}})
 
 
 class BridgeTests(unittest.TestCase):
@@ -50,6 +68,63 @@ class BridgeTests(unittest.TestCase):
         self.device = DeviceFixture()
         bridge.device = self.device
         bridge.power_cache['at'] = 0
+
+    def identity_params(self, text):
+        node = next(n for n in bridge.tree()['nodes'] if n['editable'])
+        return {'nodeId': node['id'], 'selector': node['selector'], 'instance': node['instance'], 'bounds': node['bounds'], 'windowId': self.device.window, 'text': text}
+
+    def test_own_write_and_clear_can_resize_the_same_field_without_losing_verification(self):
+        for resource in ('package:id/input', ''):
+            with self.subTest(resource=resource):
+                self.device = DeviceFixture()
+                bridge.device = self.device
+                self.device.resource = resource
+                self.device.text = ''
+                self.device.on_write = lambda: setattr(self.device, 'bounds', [10, 10, 400 if self.device.text else 500, 100])
+                for text in ('probe', '中文😀', ''):
+                    result = bridge.invoke('setText', self.identity_params(text))
+                    self.assertEqual(result['verification'], 'verified')
+                    self.assertEqual(result['text'], text)
+                self.assertEqual(self.device.writes, ['probe', '中文😀', ''])
+
+    def test_write_rejects_changed_geometry_or_cached_identity_before_injection(self):
+        params = self.identity_params('probe')
+        self.device.bounds = [10, 10, 400, 100]
+        with self.assertRaises(bridge.AppStateError):
+            bridge.invoke('setText', params)
+        self.assertFalse(getattr(self.device, 'writes', []))
+        self.device.bounds = params['bounds']
+        params['nodeId'] = 'missing'
+        with self.assertRaises(bridge.AppStateError):
+            bridge.invoke('setText', params)
+        self.assertFalse(getattr(self.device, 'writes', []))
+
+    def test_post_write_identity_rejects_window_parent_resource_and_password_changes(self):
+        for attribute, value in [('window', 'other u0 package/Activity'), ('parent_class', 'android.widget.FrameLayout'),
+                                 ('resource', 'package:id/other'), ('password', True), ('ambiguous', True), ('bounds', [600, 10, 1000, 100])]:
+            with self.subTest(attribute=attribute):
+                self.device = DeviceFixture()
+                bridge.device = self.device
+                params = self.identity_params('probe')
+                self.device.on_write = lambda: setattr(self.device, attribute, value)
+                result = bridge.invoke('setText', params)
+                self.assertEqual(result['verification'], 'inconclusive')
+                self.assertEqual(self.device.writes, ['probe'])
+
+    def test_original_field_can_lose_focus_or_change_class_with_a_stable_resource(self):
+        for attribute, value in [('focused', False), ('actual_class', 'miuix.androidbasewidget.widget.ClearableEditText')]:
+            with self.subTest(attribute=attribute):
+                self.device = DeviceFixture()
+                bridge.device = self.device
+                params = self.identity_params('probe')
+                self.device.on_write = lambda: setattr(self.device, attribute, value)
+                self.assertEqual(bridge.invoke('setText', params)['verification'], 'verified')
+
+    def test_actual_content_mismatch_stays_failed_without_repeating_the_write(self):
+        params = self.identity_params('probe')
+        self.device.on_write = lambda: setattr(self.device, 'text', 'formatted')
+        self.assertEqual(bridge.invoke('setText', params)['verification'], 'failed')
+        self.assertEqual(self.device.writes, ['probe'])
 
     def test_one_shot_text_can_read_an_unfocused_unicode_field(self):
         self.device.text = '中文😀'

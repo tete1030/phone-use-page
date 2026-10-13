@@ -9,7 +9,7 @@ import {createVideoManager} from './video-manager.js';
 import type {VideoMode} from './video-race.js';
 import {installTouch} from './touch-client.js';
 import {videoFreshness} from './video-freshness.js';
-import {currentDraftTarget,focusedTextNode,writableTextNode,type DraftTarget} from './text-draft.js';
+import {currentDraftTarget,focusedTextNode,writableTextNode,refreshWrittenDraftTarget,type DraftTarget} from './text-draft.js';
 type VideoProvider=TurnProvider|'wss';
 const basePath=normalizeBasePath(document.documentElement.dataset.consoleBase),endpoint=(path:string)=>consolePath(basePath,path);
 
@@ -66,6 +66,7 @@ async function initialize() {
   let recoveryTimer:ReturnType<typeof setTimeout>|undefined,handshakeTimer:ReturnType<typeof setTimeout>|undefined,recoveryDeadline:ReturnType<typeof setTimeout>|undefined;
   let inspected:{node:AndroidNode;snapshotId:string}|null=null;
   let draftTarget:DraftTarget|null=null,dirty=false,textPending=false,textNotice='';
+  let writtenDraft:{target:DraftTarget;value:string;epoch:number;until:number}|null=null;
   let currentTask:any=boot.tasks[0]||null,keyMode='letters',control:WebSocket|null=null;
   let meta={width:0,height:0,codec:0};
   let networkInfo:unknown=null,networkLoading=false;
@@ -126,16 +127,21 @@ async function initialize() {
   }
   function textState(message?:string){
     if(message!==undefined)textNotice=message;
+    if(writtenDraft){
+      if(writtenDraft.target!==draftTarget||writtenDraft.epoch!==connectionEpoch||performance.now()>writtenDraft.until||observation.windowId!==writtenDraft.target.windowId)writtenDraft=null;
+      else{const refreshed=refreshWrittenDraftTarget(observation,writtenDraft.target,writtenDraft.value);if(refreshed){draftTarget=refreshed;writtenDraft=null;}
+        else if(writtenDraft.target.source==='focus'&&focusedTextNode(observation)?.id!==writtenDraft.target.node.id)writtenDraft=null;}
+    }
     if(!dirty&&!textPending&&(!draftTarget||draftTarget.source==='focus')){const node=focusedTextNode(observation);draftTarget=node?{node:structuredClone(node),windowId:observation.windowId,source:'focus'}:null;}
     const fields=observation.nodes.filter(writableTextNode),ids=new Set(fields.map(n=>n.id));
     for(const option of [...textTargetSelect.options])if(option.value&&!ids.has(option.value)&&option.value!==draftTarget?.node.id)option.remove();
     for(const node of fields){let option=[...textTargetSelect.options].find(o=>o.value===node.id);if(!option){option=document.createElement('option');option.value=node.id;textTargetSelect.append(option);}assign(option,label(node,observation.nodes)+' · '+(node.resourceId||node.className));option.disabled=false;}
     if(draftTarget&&!ids.has(draftTarget.node.id)){let option=[...textTargetSelect.options].find(o=>o.value===draftTarget!.node.id);if(!option){option=document.createElement('option');option.value=draftTarget.node.id;textTargetSelect.append(option);}assign(option,'原目标已不可用');option.disabled=true;}
     textTargetSelect.value=currentDraftTarget(observation,draftTarget)?draftTarget!.node.id:'';textTargetSelect.disabled=!online||textPending||taskBusy;
-    const node=currentDraftTarget(observation,draftTarget),ready=interactive()&&!!node&&controlAllowed&&!appsBusy&&!textPending&&!taskBusy&&!touch?.active();
+    const node=currentDraftTarget(observation,draftTarget),ready=interactive()&&!!node&&controlAllowed&&!appsBusy&&!textPending&&!writtenDraft&&!taskBusy&&!touch?.active();
     q<HTMLButtonElement>('.text-submit').disabled=!ready;q<HTMLButtonElement>('.text-read').disabled=!ready;
     assign(q('.text-target-status'),draftTarget?'填写到：'+label(draftTarget.node,observation.nodes):'请选择手机输入字段');
-    assign(q('.text-status'),!online?'本页已离线，草稿保留':!interactive()?'手机状态不可操作，草稿保留':textPending?'正在处理文字请求；不会自动重试':!node&&draftTarget?(textNotice&&!textNotice.startsWith('草稿')?textNotice+'；目标已改变，请重新选择':'目标已改变，请重新选择；草稿保留'):textNotice||(!node?'请选择输入字段；仅有一个手机文字焦点时会自动选中':'网页内容仅为草稿，点击“填写到手机”才会替换原文'));
+    assign(q('.text-status'),!online?'本页已离线，草稿保留':!interactive()?'手机状态不可操作，草稿保留':textPending?'正在处理文字请求；不会自动重试':writtenDraft?textNotice+'；等待输入框最新快照':!node&&draftTarget?(textNotice&&!textNotice.startsWith('草稿')?textNotice+'；目标已改变，请重新选择':'目标已改变，请重新选择；草稿保留'):textNotice||(!node?'请选择输入字段；仅有一个手机文字焦点时会自动选中':'网页内容仅为草稿，点击“填写到手机”才会替换原文'));
     inputAvailability();
   }
   function inputAvailability(){phone.disabled=!online||!transportReady||taskBusy||appsBusy;text.readOnly=textPending;q<HTMLButtonElement>('.video-reconnect').disabled=!online;const blocked=!!touch?.active()||!interactive()||(!controlAllowed||appsBusy)||!observation.controlAvailable;q('.keys')?.querySelectorAll<HTMLButtonElement>('button').forEach(b=>b.disabled=blocked);qa('[data-press],[data-gesture],[data-mode],[data-panel]').forEach(b=>(b as HTMLButtonElement).disabled=blocked);q<HTMLButtonElement>('.run').disabled=!online||!transportReady||taskBusy||!!touch?.active();q<HTMLButtonElement>('.check-code').disabled=!online||taskBusy;details();route();}
@@ -173,8 +179,9 @@ async function initialize() {
   }
   async function writeDraft(){
     const node=currentDraftTarget(observation,draftTarget);if(!node||!interactive()||textPending||!controlAllowed||taskBusy||appsBusy){textState('目标不可用，未发送；草稿保留');return;}
-    const destination=label(node,observation.nodes),value=text.value;textPending=true;textState();
+    const destination=label(node,observation.nodes),value=text.value,selected=draftTarget!,epoch=connectionEpoch;textPending=true;textState();
     try{const result=await perform('/api/node',{target:target(node),action:'setText',value});
+      if(result.verification==='verified'&&draftTarget===selected)writtenDraft={target:selected,value,epoch,until:performance.now()+10000};
       textNotice=result.verification==='verified'?'已填写到 '+destination+'，原文已替换并验证':result.verification==='failed'?'已发送，但手机文字与草稿不同；请检查手机，不会自动重试':'已发送，结果未确认；请观察手机，不会自动重试';
     }catch(error){textNotice=String(error)+'；草稿保留，不会自动重试';}finally{textPending=false;textState();}
   }

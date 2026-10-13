@@ -79,7 +79,13 @@ try {
           window.__writes.push(body);await new Promise(r=>setTimeout(r,100));
           if(window.__failNextWrite){window.__failNextWrite=false;return new Response(JSON.stringify({error:{code:'STALE_TARGET',message:'目标已改变，未发送'}}),{status:409});}
           window.__phoneText=body.value;
-          if(window.__advanceFocus){window.__advanceFocus=false;window.__observe({...window.__state,nodes:window.__state.nodes.map(n=>({...n,focused:false})),focus:null,focusEpoch:1});}
+          let nodes=window.__state.nodes.map(n=>n.id===body.target.id?{...n,text:body.value,fingerprint:'write-'+window.__writes.length,
+            ...(window.__resizeWrites?{bounds:[n.bounds[0],n.bounds[1],body.value?850:950,n.bounds[3]]}:{})}:n);
+          if(window.__advanceFocus){window.__advanceFocus=false;nodes=nodes.map(n=>({...n,focused:false}));}
+          if(window.__replaceAfterWrite){window.__replaceAfterWrite=false;nodes=nodes.map(n=>n.id===body.target.id?{...n,id:'replacement-field'}:n);}
+          const updated={...window.__state,nodes,focus:nodes.find(n=>n.focused)||null,...(window.__changeWindowAfterWrite?{windowId:'changed-window'}:{})};
+          if(window.__deferWriteObservation){const ms=window.__deferWriteObservation;window.__deferWriteObservation=0;setTimeout(()=>window.__observe(updated),ms);}
+          else window.__observe(updated);
           data={verification:'verified'};
         }
       }
@@ -151,6 +157,28 @@ try {
   await page.reload();await page.waitForFunction(()=>document.querySelector('.page-status').textContent==='在线');
   assert.equal(await jitter.isChecked(),false);await jitter.check();
   for(const viewport of [{width:1600,height:900},{width:1919,height:998}]){await page.setViewportSize(viewport);await page.waitForTimeout(200);const geometry=await page.evaluate(()=>({w:document.documentElement.scrollWidth,h:document.documentElement.scrollHeight}));assert.ok(geometry.w<=viewport.width&&geometry.h<=viewport.height);await page.screenshot({path:`.local/agent-layout-${viewport.width}.png`});}
+  await page.reload();await page.waitForFunction(()=>window.__offers>0&&document.querySelector('.page-status').textContent==='在线');
+  await page.evaluate(()=>{window.__paintFrame();window.__resizeWrites=true;});
+  await draft.fill('resize-probe');await page.locator('.text-submit').click();
+  await page.waitForFunction(()=>window.__phoneText==='resize-probe'&&!document.querySelector('.text-submit').disabled);
+  assert.equal(await page.locator('.text-target').inputValue(),'field1');
+  await draft.fill('');await page.locator('.text-submit').click();await page.waitForFunction(()=>window.__phoneText===''&&!document.querySelector('.text-submit').disabled);
+  assert.equal(await page.locator('.text-target').inputValue(),'field1');
+  await page.evaluate(()=>window.__deferWriteObservation=500);await draft.fill('late-snapshot');await page.locator('.text-submit').click();
+  await page.waitForFunction(()=>document.querySelector('.text-status').textContent.includes('等待输入框最新快照'));
+  assert.equal(await page.locator('.text-submit').isDisabled(),true);
+  await page.waitForFunction(()=>!document.querySelector('.text-submit').disabled);
+  assert.equal(await draft.inputValue(),'late-snapshot');
+  await page.evaluate(()=>window.__observe({...window.__state,nodes:window.__state.nodes.map(n=>({...n,bounds:[60,180,800,300],fingerprint:'external-resize'}))}));
+  assert.equal(await page.locator('.text-submit').isDisabled(),true);
+  await page.locator('.text-target').selectOption('field1');await page.evaluate(()=>window.__replaceAfterWrite=true);await draft.fill('do-not-follow');await page.locator('.text-submit').click();
+  await page.waitForFunction(()=>document.querySelector('.text-status').textContent.includes('已填写'));
+  assert.equal(await page.locator('.text-submit').isDisabled(),true);assert.equal(await page.locator('.text-target').inputValue(),'');
+  assert.equal(await draft.inputValue(),'do-not-follow');
+  await page.reload();await page.waitForFunction(()=>window.__offers>0&&document.querySelector('.page-status').textContent==='在线');
+  await page.evaluate(()=>{window.__paintFrame();window.__changeWindowAfterWrite=true;});await draft.fill('new-window');await page.locator('.text-submit').click();
+  await page.waitForFunction(()=>document.querySelector('.text-status').textContent.includes('已填写'));
+  assert.equal(await page.locator('.text-submit').isDisabled(),true);assert.equal(await page.locator('.text-target').inputValue(),'');
   await page.locator('.video-enlarge').click();assert.equal(await page.locator('.close-enlarge').isVisible(),true);await page.locator('.close-enlarge').click();
   const old=await page.locator('.phone').getAttribute('data-video-freshness');await page.locator('.video-reconnect').click();await page.waitForTimeout(200);assert.equal(await page.locator('.page-status').textContent(),'在线');
   await page.locator('.logout').click();assert.equal(await page.getByRole('dialog',{name:'确认操作'}).isVisible(),true);await page.getByRole('button',{name:'取消',exact:true}).click();assert.equal(await page.locator('.page-status').textContent(),'在线');
@@ -177,6 +205,6 @@ try {
   assert.equal(await page.locator('[data-video-mode][value=auto]').isChecked(),true);
   assert.equal(await page.locator('[data-video-mode][value=wss]').isDisabled(),true);
   assert.equal(await page.evaluate(()=>window.__sockets.some(ws=>ws.url.includes('/ws/video'))),false);
-  assert.deepEqual(errors,[]);const report={passed:true,checks:['one draft textbox without mirror controls','fill/type and Enter never send automatically','draft does not block navigation or JS','explicit Unicode/empty writes','phone changes never overwrite draft','focus change requires target selection','one-shot native read','failure preserves draft without retry','node jitter default and checkbox override','JS captures jitter setting','jitter setting survives reload','two viewport layouts','enlarge exit','video-only reconnect','accessible logout confirmation','WSS-only creates no WebRTC and resets unavailable saved mode','WSS diagnostics include version and auth headers; failed reporting leaves control online','direct-only is selectable without TURN or WSS'],phoneAccessed:false,writes};
+  assert.deepEqual(errors,[]);const report={passed:true,checks:['one draft textbox without mirror controls','fill/type and Enter never send automatically','draft does not block navigation or JS','explicit Unicode/empty writes','phone changes never overwrite draft','focus change requires target selection','one-shot native read','failure preserves draft without retry','own verified resize and clear retain the same target','delayed observation keeps text actions disabled until the own write is observed','external resize, replacement and new window require target selection','node jitter default and checkbox override','JS captures jitter setting','jitter setting survives reload','two viewport layouts','enlarge exit','video-only reconnect','accessible logout confirmation','WSS-only creates no WebRTC and resets unavailable saved mode','WSS diagnostics include version and auth headers; failed reporting leaves control online','direct-only is selectable without TURN or WSS'],phoneAccessed:false,writes};
   await writeFile('.local/agent-ui-result.json',JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify(report));
 }finally{await browser?.close();await new Promise(resolve=>server.close(resolve));}

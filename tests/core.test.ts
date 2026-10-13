@@ -1,4 +1,4 @@
-import {currentDraftTarget,focusedTextNode} from '../src/text-draft.js';
+import {currentDraftTarget,focusedTextNode,refreshWrittenDraftTarget} from '../src/text-draft.js';
 import {TouchControl} from '../src/touch-control.js';
 import {randomUUID} from 'node:crypto';
 import {once} from 'node:events';
@@ -136,6 +136,23 @@ test('draft targets never guess among multiple focused fields or silently follow
   n.focused=false;d.state.focus=second;assert.equal(currentDraftTarget(d.state,selection),null);
   assert.equal(currentDraftTarget(d.state,{...selection,source:'selected'})?.id,n.id);
   d.state.windowId='new-window';assert.equal(currentDraftTarget(d.state,{...selection,source:'selected'}),null);
+});
+
+test('only verified own text can refresh a resized draft target, without following other fields',()=>{
+  const {d,n}=textFixture(),selection={node:structuredClone(n),windowId:d.state.windowId,source:'focus' as const};
+  n.bounds=[0,0,80,100];n.text='written';n.fingerprint='written';
+  assert.equal(currentDraftTarget(d.state,selection),null);
+  const refreshed=refreshWrittenDraftTarget(d.state,selection,'written');
+  assert.ok(refreshed);assert.equal(currentDraftTarget(d.state,refreshed)?.id,n.id);
+  assert.deepEqual(selection.node.bounds,[0,0,100,100]);
+  assert.equal(refreshWrittenDraftTarget(d.state,selection,'different'),null);
+  n.bounds=[200,0,300,100];assert.equal(refreshWrittenDraftTarget(d.state,selection,'written'),null);n.bounds=[0,0,80,100];
+  n.parentId='new-parent';assert.equal(refreshWrittenDraftTarget(d.state,selection,'written'),null);n.parentId=null;
+  n.resourceId='other';assert.equal(refreshWrittenDraftTarget(d.state,selection,'written'),null);n.resourceId=selection.node.resourceId;
+  n.password=true;assert.equal(refreshWrittenDraftTarget(d.state,selection,'written'),null);n.password=false;
+  n.focused=false;d.state.focus=null;assert.equal(refreshWrittenDraftTarget(d.state,selection,'written'),null);
+  assert.ok(refreshWrittenDraftTarget(d.state,{...selection,source:'selected'},'written'));
+  d.state.windowId='new-window';assert.equal(refreshWrittenDraftTarget(d.state,selection,'written'),null);
 });
 
 test('failed power reads mark prior screen state unknown and successful reads recover',async()=>{

@@ -167,6 +167,12 @@ def text_object(selector, instance=0, bounds=None, strict_bounds=True):
     return matches[0]
 
 
+def same_text_region(before, after):
+    overlap = max(0, min(before[2], after[2]) - max(before[0], after[0])) * max(0, min(before[3], after[3]) - max(before[1], after[1]))
+    areas = [(b[2] - b[0]) * (b[3] - b[1]) for b in (before, after)]
+    return min(areas) > 0 and overlap >= max(areas) / 2
+
+
 def focused():
     d = connect()
     window = current_window()
@@ -298,6 +304,14 @@ def invoke(method, params):
             if current_window() != window:
                 raise AppStateError('STALE_TARGET', 'Window changed during text read')
             return {'text': text}
+        original = None
+        if params.get('nodeId'):
+            originals = [n for n in last_nodes if n['id'] == params['nodeId']]
+            if last_window != window or len(originals) != 1 or originals[0]['bounds'] != bounds:
+                raise AppStateError('STALE_TARGET', 'Text target identity changed before writing')
+            original = dict(originals[0])
+            if not original['editable'] or original['password']:
+                raise AppStateError('TEXT_WRITE_UNSUPPORTED', 'Target is not an editable non-password field')
         if params['text']:
             if d.jsonrpc.setText(obj.selector, params['text']) is False:
                 raise AppStateError('TEXT_WRITE_UNSUPPORTED', 'This widget does not support replacing text')
@@ -307,8 +321,24 @@ def invoke(method, params):
         try:
             if current_window() != window:
                 return {'written': True, 'verification': 'inconclusive'}
-            obj, info, actual = text_object(params['selector'], params.get('instance', 0), params['bounds'], False)
-            if actual != params['bounds'] or info.get('password'):
+            if original:
+                snapshot = tree()
+                matches = [n for n in snapshot['nodes'] if n['id'] == original['id']]
+                if snapshot['windowId'] != window or len(matches) != 1:
+                    return {'written': True, 'verification': 'inconclusive'}
+                current = matches[0]
+                if (not current['editable'] or current['password'] or not current['enabled'] or not current['visible']
+                        or any(current[key] != original[key] for key in ('parentId', 'package', 'resourceId'))
+                        or not original['resourceId'] and current['className'] != original['className']
+                        or not same_text_region(original['bounds'], current['bounds'])):
+                    return {'written': True, 'verification': 'inconclusive'}
+                # The clear button or keyboard can resize the same field after our write.
+                expected_bounds = current['bounds']
+                obj, info, actual = text_object(current['selector'], current['instance'], expected_bounds)
+            else:
+                expected_bounds = params['bounds']
+                obj, info, actual = text_object(params['selector'], params.get('instance', 0), expected_bounds, False)
+            if actual != expected_bounds or info.get('password') or current_window() != window:
                 return {'written': True, 'verification': 'inconclusive'}
             text = d.jsonrpc.getText(obj.selector) or ''
             if current_window() != window:

@@ -119,7 +119,7 @@ export class Device extends EventEmitter {
       if(action!=='setText'&&!this.state.controlAvailable)throw new ConsoleError('NO_CONTROL','设备未允许触摸或按键注入',503);
       if(action==='setText') {
         if(!n.editable||n.password||typeof value!=='string'||value.length>32768)throw new ConsoleError('UNSUPPORTED_ACTION','该节点不支持文本替换');
-        const confirmation=await this.bridge.call('setText',{selector:n.selector,instance:n.instance,bounds:n.bounds,windowId:this.state.windowId,text:value},15000,()=>{this.claim(session,task);this.assertScreen();});
+        const confirmation=await this.bridge.call('setText',{nodeId:n.id,selector:n.selector,instance:n.instance,bounds:n.bounds,windowId:this.state.windowId,text:value},15000,()=>{this.claim(session,task);this.assertScreen();});
         textVerification=confirmation.verification||('text' in confirmation?(confirmation.text===value?'verified':'failed'):'inconclusive');
       } else if(action==='setChecked') {
         if(!n.checkable||!n.clickable||typeof value!=='boolean')throw new ConsoleError('UNSUPPORTED_ACTION','该节点未报告可用开关能力');
