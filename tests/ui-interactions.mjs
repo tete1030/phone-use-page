@@ -42,6 +42,10 @@ try {
     const nativeNow=performance.now.bind(performance);
     performance.now=()=>nativeNow()+window.__clockOffset;
     const frameCallbacks=new Map();let frameId=0;
+    // This suite mocks media callbacks; real decoded-frame rendering has its own RTC test.
+    delete window.MediaStreamTrackProcessor;
+    Object.defineProperty(HTMLVideoElement.prototype,'videoWidth',{get:()=>864});
+    Object.defineProperty(HTMLVideoElement.prototype,'videoHeight',{get:()=>1920});
     HTMLVideoElement.prototype.play=async()=>{};
     HTMLVideoElement.prototype.requestVideoFrameCallback=function(callback){frameCallbacks.set(this,callback);return ++frameId;};
     window.__paintFrame=()=>{for(const [video,callback]of [...frameCallbacks]){frameCallbacks.delete(video);callback(performance.now(),{});}};
