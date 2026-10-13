@@ -35,6 +35,10 @@ async function initialize() {
   const keyboardDetails=document.createElement('details');keyboardDetails.className='advanced-input';
   const summary=document.createElement('summary');summary.textContent='原始键盘与更多手势';keyboardDetails.append(summary);
   const keyboardPane=q('.keyboard-command');keyboardDetails.append(q('.capture-buttons'),keyboardPane,q('.clipboard-command'),q('.gesture-command'));q('.commands').style.position='relative';q('.commands').append(keyboardDetails);
+  const textContent=document.createElement('div');textContent.className='text-content';
+  const textPanel=q('.text-command');textContent.append(...[...textPanel.children].filter(child=>!['section-head','text-toolbar','text-status'].some(name=>child.classList.contains(name))));textPanel.append(textContent,q('.text-toolbar'),q('.text-status'));
+  const scriptContent=document.createElement('div');scriptContent.className='script-content';
+  const scriptPanel=q('.script-command');scriptContent.append(q('.code-field'),q('.script-note'));scriptPanel.insertBefore(scriptContent,q('.run-toolbar'));
   const process=q('[aria-label="检测到进程"]'),processDetails=document.createElement('details');processDetails.className='process-diagnostics';
   const processSummary=document.createElement('summary');processSummary.textContent='进程诊断（按需展开）';processDetails.append(processSummary,process);q('.applications-panel').append(processDetails);
   let touch:ReturnType<typeof installTouch>|null=null,toolsOpen=false,touchNotice='';

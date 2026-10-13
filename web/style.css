@@ -403,10 +403,10 @@ body{background:#f5f7fc}
 #android-observable .detail-properties{max-height:80px;overflow:auto}
 #android-observable .node-footer{flex-wrap:wrap;gap:3px 8px;padding:3px 8px;line-height:1.5}
 @media (min-width:1200px){
-  #android-observable .workspace{grid-template-rows:220px minmax(min-content,1fr);overflow:auto;overscroll-behavior:contain}
+  #android-observable .workspace{grid-template-rows:clamp(150px,20%,180px) minmax(0,1fr);overflow:visible}
 }
 @media (min-width:901px) and (max-width:1199px){
-  #android-observable .workspace{grid-template-rows:260px 420px minmax(min-content,640px)}
+  #android-observable .workspace{grid-template-columns:minmax(0,1fr) minmax(0,1.05fr);grid-template-rows:clamp(150px,22%,180px) minmax(0,1fr);grid-template-areas:'applications applications' 'nodes commands';overflow:visible}
 }
 @media (max-width:900px){
   #android-observable .workspace{grid-template-rows:max-content 420px minmax(min-content,640px)}
@@ -415,4 +415,27 @@ body{background:#f5f7fc}
   #android-observable .applications-panel > .section-head{display:grid;grid-template-columns:minmax(0,1fr) auto}
   #android-observable .applications-panel .application-search{grid-column:1 / -1;grid-row:2;width:100%;max-width:none;height:28px}
   #android-observable .applications-refresh{grid-column:2;grid-row:1}
+}
+
+/* Keep desktop panels on screen; only their content consumes scrolling space. */
+#android-observable .text-command{grid-template-rows:max-content minmax(0,1fr) max-content max-content}
+#android-observable .text-content{display:grid;grid-template-rows:max-content max-content minmax(48px,1fr) max-content;min-height:0;overflow:auto;overscroll-behavior:contain}
+#android-observable .script-command{grid-template-rows:auto minmax(0,1fr) auto}
+#android-observable .script-content{display:grid;grid-template-rows:minmax(80px,1fr) auto;min-height:0;overflow:auto;overscroll-behavior:contain}
+@media (min-width:901px){
+  #android-observable .workspace{min-height:0;align-content:stretch}
+  #android-observable .commands{min-height:0;grid-template-rows:minmax(0,1.6fr) minmax(0,1.25fr) minmax(100px,.65fr) auto}
+  #android-observable .nodes-pane{grid-template-rows:auto auto auto auto minmax(0,1fr) auto auto;overflow:hidden}
+  #android-observable .node-detail{max-height:150px;overflow:auto;min-height:0}
+  #android-observable .result-command{overflow:hidden}
+}
+@media (min-width:901px) and (max-height:720px){
+  #android-observable .workspace{grid-template-columns:minmax(0,.65fr) minmax(0,1.35fr);grid-template-rows:clamp(140px,20%,170px) minmax(0,1fr)}
+  #android-observable .commands{grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:minmax(0,1fr) 100px auto}
+  #android-observable .text-command{grid-column:1;grid-row:1}
+  #android-observable .script-command{grid-column:2;grid-row:1}
+  #android-observable .result-command{grid-column:1 / -1;grid-row:2}
+  #android-observable .advanced-input{grid-column:1 / -1;grid-row:3}
+  #android-observable .node-detail{max-height:70px}
+  #android-observable .application-help{max-height:24px;overflow:auto}
 }

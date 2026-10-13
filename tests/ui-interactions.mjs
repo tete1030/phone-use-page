@@ -300,12 +300,13 @@ try {
       if(!element.getClientRects().length||element.closest('details:not([open])'))continue;const bounds=element.getBoundingClientRect(),panel=element.closest(panelSelector),panelBounds=panel.getBoundingClientRect();
       let clipped=false;for(let ancestor=element.parentElement;ancestor&&ancestor!==panel;ancestor=ancestor.parentElement)if(['auto','scroll','hidden','clip'].includes(getComputedStyle(ancestor).overflowY)){clipped=true;break;}
       if(!clipped&&(bounds.top<panelBounds.top-1||bounds.bottom>panelBounds.bottom+1))errors.push(selector+' escapes '+panelSelector);
+      if(['auto','scroll'].includes(getComputedStyle(element).overflowY))continue;
       const walker=document.createTreeWalker(element,NodeFilter.SHOW_TEXT);let node;while(node=walker.nextNode()){if(!node.textContent.trim())continue;const range=document.createRange();range.selectNodeContents(node);for(const rect of range.getClientRects())if(rect.height&&(rect.top<bounds.top-1||rect.bottom>bounds.bottom+1))errors.push(selector+' text exceeds its row');}
     }
     for(const time of document.querySelectorAll('.log-time')){const range=document.createRange();range.selectNodeContents(time);if([...range.getClientRects()].filter(r=>r.width).length>1)errors.push('timeline timestamp wraps');}
     return errors;
   });assert.deepEqual(violations,[],'wrapped text stays within its own panel');}
-  for(const viewport of [{width:390,height:844},{width:844,height:390},{width:360,height:640},{width:1024,height:600},{width:1280,height:600},{width:1600,height:900}]){
+  for(const viewport of [{width:390,height:844},{width:844,height:390},{width:360,height:640},{width:1024,height:600},{width:1280,height:600},{width:1366,height:768},{width:1600,height:900},{width:1919,height:998}]){
     await page.setViewportSize(viewport);await page.waitForTimeout(100);await page.evaluate(()=>window.__paintFrame());
     const narrow=viewport.width<=600;assert.equal(await page.locator('.right-shell').isVisible(),!narrow);assert.equal(await page.locator('.mobile-header').isVisible(),narrow);
     const box=await page.locator('.phone').boundingBox();assert.ok(box.x>=0&&box.y>=0&&box.x+box.width<=viewport.width&&box.y+box.height<=viewport.height);
@@ -318,11 +319,36 @@ try {
       const toolsBox=await page.locator('.right-shell').boundingBox();assert.ok(toolsBox.x>=box.x+box.width&&toolsBox.x+toolsBox.width<=viewport.width);
       for(const name of ['.applications-panel','.nodes-pane','.commands'])assert.equal(await page.locator(name).isVisible(),true);
       await assertTextLayout();
-      if(viewport.height<=720){assert.equal(await page.locator('.workspace').evaluate(n=>n.scrollHeight>n.clientHeight),true);await page.locator('.run').scrollIntoViewIfNeeded();assert.equal(await page.locator('.run').isVisible(),true);}
+      if(viewport.width>=901){
+        const geometry=await page.evaluate(()=>{const work=document.querySelector('.workspace'),bounds=work.getBoundingClientRect();return {
+          height:work.clientHeight,scrollHeight:work.scrollHeight,
+          panels:[...document.querySelectorAll('.applications-panel,.nodes-pane,.text-command,.script-command,.result-command,.advanced-input')].map(n=>{const b=n.getBoundingClientRect();return {name:n.className,top:b.top,bottom:b.bottom,height:b.height};}),
+          actions:[...document.querySelectorAll('.text-submit,.text-read,.run,.check-code')].map(n=>{const b=n.getBoundingClientRect(),p=n.closest('.command').getBoundingClientRect();return {name:n.className,visible:b.top>=p.top&&b.bottom<=p.bottom,height:b.height};}),
+          contents:[...document.querySelectorAll('.application-list,.node-body,.results')].filter(n=>n.getClientRects().length&&!n.closest('details:not([open])')).map(n=>({name:n.className,height:n.clientHeight})),
+          top:bounds.top,bottom:bounds.bottom,
+        };});
+        assert.ok(geometry.scrollHeight<=geometry.height+1,JSON.stringify({viewport,...geometry}));
+        for(const panel of geometry.panels)assert.ok(panel.top>=geometry.top-1&&panel.bottom<=geometry.bottom+1&&panel.height>0,JSON.stringify({viewport,panel,geometry}));
+        for(const content of geometry.contents)assert.ok(content.height>=24,JSON.stringify({viewport,content,geometry}));
+        for(const action of geometry.actions)assert.ok(action.visible&&action.height>=20,JSON.stringify({viewport,action,geometry}));
+        assert.equal(await page.locator('.workspace').evaluate(n=>getComputedStyle(n).overflowY),'visible');
+        assert.equal(await page.locator('.run').isVisible(),true);
+      }else if(viewport.height<=720){assert.equal(await page.locator('.workspace').evaluate(n=>n.scrollHeight>n.clientHeight),true);}
     }
   }
   checks.push({name:'coarse pointer car and phone landscape keep tools visible; Muse-sized workbench stays complete'});
+  checks.push({name:'desktop panels fit the viewport with usable list areas and independent content scrolling'});
   checks.push({name:'wrapped descriptions stay within panels and timestamps fit one line at every tested viewport'});
+  await page.setViewportSize({width:1600,height:900});await page.waitForTimeout(100);
+  const populated=await page.evaluate(()=>{
+    const lists=[document.querySelector('.node-list'),document.querySelector('.tasks-list'),document.querySelector('.apps-list'),document.querySelector('.results')];
+    const temporary=[];for(const list of lists)for(let i=0;i<120;i++){const row=document.createElement(list.tagName==='UL'?'li':'div');row.textContent='fixture row '+i+' - long content for independent scrolling';row.style.minHeight='24px';list.append(row);temporary.push(row);}
+    const work=document.querySelector('.workspace'),areas=[document.querySelector('.node-body'),document.querySelector('.tasks-list'),document.querySelector('.apps-list'),document.querySelector('.results')];
+    const data={height:work.clientHeight,scrollHeight:work.scrollHeight,areas:areas.map(n=>({height:n.clientHeight,scrollHeight:n.scrollHeight,overflow:getComputedStyle(n).overflowY}))};
+    for(const row of temporary)row.remove();return data;
+  });
+  assert.ok(populated.scrollHeight<=populated.height+1);for(const area of populated.areas){assert.ok(area.scrollHeight>area.height);assert.equal(area.overflow,'auto');}
+  checks.push({name:'long application, node and timeline lists scroll locally without expanding the desktop workspace'});
   await page.setViewportSize({width:390,height:844});await page.waitForTimeout(100);await page.evaluate(()=>window.__paintFrame());
   const cdp=await context.newCDPSession(page),box=await page.locator('.video-canvas').boundingBox(),tx=box.x+box.width/2,ty=box.y+box.height/2;
   const mobilePhoneBox=await page.locator('.phone').boundingBox(),bufferY=mobilePhoneBox.y+mobilePhoneBox.height+1;
