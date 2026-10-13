@@ -22,6 +22,7 @@ import { WebRtcVideo,rtcConfig } from './webrtc.js';
 import {TurnCredentials,loadTurnKey} from './turn-credentials.js';
 import {installWebRtcRoutes} from './webrtc-http.js';
 import {installWssVideoRoute} from './wss-http.js';
+import {installClientVideoLog,CLIENT_VIDEO_ERROR_PATH} from './client-video-log.js';
 import {ParallelWebRtcVideo} from './parallel-webrtc.js';
 import { normalizeBasePath,consolePath,internalPath,permittedHost } from './paths.js';
 import {selectAndroidDevice} from './device-selection.js';
@@ -46,7 +47,7 @@ function syncVideoPower(){const state=device.state,reason=state.powerError||!sta
 device.on('power',syncVideoPower);device.on('observation',syncVideoPower);syncVideoPower();
 const app=Fastify({bodyLimit:262144,logger:false,trustProxy:trustedProxies||false});await app.register(cookie);await app.register(websocket,{options:{maxPayload:65536}});await app.register(statics,{root:resolve('dist/web'),prefix:endpoint('/assets/')});
 const audit=new Audit(resolve(process.env.AUTH_DATA_DIR||'.local/auth','../audit'));
-app.addHook('onResponse',async(req,reply)=>{const logged=auth.get(req.cookies[authHttp.cookieName]);const body=(req.body||{}) as any;audit.record({at:new Date().toISOString(),method:req.method,path:internalPath(req.url.split('?')[0]!,basePath),status:reply.statusCode,ip:req.ip,client:String(req.headers['user-agent']||'').slice(0,300),owner:(req as any).auditOwner,user:logged||req.url===endpoint('/api/login')&&reply.statusCode===200?'console':'anonymous',session:logged?.id,verification:(req as any).auditVerification,errorCode:(req as any).auditErrorCode,requestId:typeof body.requestId==='string'?body.requestId:undefined,action:typeof body.action==='string'?body.action:undefined,target:typeof body.target?.id==='string'?body.target.id:typeof body.packageName==='string'?body.packageName:undefined});});
+app.addHook('onResponse',async(req,reply)=>{if(internalPath(req.url.split('?')[0]!,basePath)===CLIENT_VIDEO_ERROR_PATH)return;const logged=auth.get(req.cookies[authHttp.cookieName]);const body=(req.body||{}) as any;audit.record({at:new Date().toISOString(),method:req.method,path:internalPath(req.url.split('?')[0]!,basePath),status:reply.statusCode,ip:req.ip,client:String(req.headers['user-agent']||'').slice(0,300),owner:(req as any).auditOwner,user:logged||req.url===endpoint('/api/login')&&reply.statusCode===200?'console':'anonymous',session:logged?.id,verification:(req as any).auditVerification,errorCode:(req as any).auditErrorCode,requestId:typeof body.requestId==='string'?body.requestId:undefined,action:typeof body.action==='string'?body.action:undefined,target:typeof body.target?.id==='string'?body.target.id:typeof body.packageName==='string'?body.packageName:undefined});});
 const controls=new Map<string,unknown>();
 const pages=new PageConnections();tasks.onActivity=owner=>{pages.requireOwner(owner);if(pages.idle(owner)){disconnect(pages.active!,'IDLE_TIMEOUT');throw new ConsoleError('PAGE_OFFLINE','5分钟无操作，已断开',409);}pages.activity(owner);};device.authorize=owner=>{pages.requireOwner(owner);if(!auth.getById(pages.active!.page.sessionId))throw new ConsoleError('LOGIN_REQUIRED','登录已失效',401);};
 let activationTail:Promise<unknown>=Promise.resolve();
@@ -67,8 +68,8 @@ app.addHook('onRequest',async(req,reply)=>{
 const authHttp=installAuth(app,auth,{secure:!!publicOrigin,cookiePath:process.env.CONSOLE_COOKIE_PATH||basePath,basePath,publicOrigin,assetVersion,onLogout:async s=>{const c=pages.active;if(c?.page.sessionId===s.id){pages.disconnect(c,'LOGGED_OUT');tasks.revokeOwner(c.owner);await serialized(()=>cleanup(c));}}});
 const authenticate=authHttp.authenticate;
 const session=(req:any,mutating=false,allowRecovery=false)=>{const s=authenticate(req,mutating),id=req.headers['x-console-page']||(req.query as any)?.page;const token=req.headers['x-console-connection']||(req.query as any)?.connection;const connection=pages.require(typeof id==='string'?id:undefined,s.id,typeof token==='string'?token:undefined,allowRecovery);if(mutating)pages.requireGeneration(connection,Number(req.headers['x-console-generation']));if(pages.idle(connection.owner)){disconnect(connection,'IDLE_TIMEOUT');throw new ConsoleError('IDLE_TIMEOUT','5分钟无操作，已断开',409);}(req as any).auditOwner=connection.owner;return {...s,owner:connection.owner,connection};};
-app.addHook('preSerialization',async(req,reply,payload)=>{if(payload&&typeof payload==='object'&&'verification' in payload)(req as any).auditVerification=(payload as any).verification;const path=internalPath(req.url,basePath);if(reply.statusCode<400&&path.startsWith('/api/')&&!['/api/login','/api/logout','/api/auth/status','/api/connection/connect','/api/connection/resume'].includes(path))session(req);return payload;});
-app.setErrorHandler((error:any,req,reply)=>{(req as any).auditErrorCode=error.code||'SERVER_ERROR';return reply.code(error instanceof ConsoleError?error.status:error instanceof z.ZodError||error.validation?400:500).send({error:{code:error instanceof z.ZodError?'INVALID_REQUEST':error.code||'SERVER_ERROR',message:error.message},...(error.execution?{execution:error.execution,verification:error.verification}:{})});});
+app.addHook('preSerialization',async(req,reply,payload)=>{if(payload&&typeof payload==='object'&&'verification' in payload)(req as any).auditVerification=(payload as any).verification;const path=internalPath(req.url,basePath);if(reply.statusCode<400&&path.startsWith('/api/')&&!['/api/login','/api/logout','/api/auth/status','/api/connection/connect','/api/connection/resume',CLIENT_VIDEO_ERROR_PATH].includes(path))session(req);return payload;});
+app.setErrorHandler((error:any,req,reply)=>{(req as any).auditErrorCode=error.code||'SERVER_ERROR';return reply.code(error instanceof ConsoleError?error.status:error.code==='FST_ERR_CTP_BODY_TOO_LARGE'?413:error instanceof z.ZodError||error.validation?400:500).send({error:{code:error instanceof z.ZodError?'INVALID_REQUEST':error.code||'SERVER_ERROR',message:error.message},...(error.execution?{execution:error.execution,verification:error.verification}:{})});});
 app.get('/health',()=>({ok:true,sdk:SDK_VERSION}));
 if(basePath!=='/')app.get(endpoint('/health'),()=>({ok:true,sdk:SDK_VERSION}));
 app.get(endpoint('/'),async(req,reply)=>{
@@ -87,6 +88,7 @@ app.post(endpoint('/api/connection/resume'),async req=>{
 });
 app.get(endpoint('/api/observation'),async req=>{session(req);return device.state;});
 installWebRtcRoutes(app,endpoint,session,rtc);
+installClientVideoLog(app,endpoint,{session:req=>session(req,true,true)});
 app.post(endpoint('/api/video/select'),req=>{const s=session(req,true),p=z.object({attemptId:z.string().uuid()}).strict().parse(req.body);return rtc.select(s.owner,p.attemptId);});
 app.post(endpoint('/api/video/cancel'),async req=>{const s=session(req,true),p=z.object({attemptId:z.string().uuid()}).strict().parse(req.body);await rtc.cancel(s.owner,p.attemptId);return {ok:true};});
 app.post(endpoint('/api/refresh'),async req=>{session(req,true);return device.collect();});

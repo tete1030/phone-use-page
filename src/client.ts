@@ -308,6 +308,10 @@ async function initialize() {
   function ensureVideoManager(){
     if(videoManager)return;
     videoManager=createVideoManager({providers:videoProviders,container:phone,paused:videoPaused,
+      assetVersion:boot.assetVersion,report:diagnostic=>{if(!online)return;
+        void fetch(endpoint('/api/video/client-error'),{method:'POST',headers:{'Content-Type':'application/json','X-Console-CSRF':boot.csrf,
+          'X-Console-Page':boot.pageId,'X-Console-Connection':connectionId,'X-Console-Generation':String(transportGeneration)},
+          body:JSON.stringify(diagnostic),signal:AbortSignal.timeout(5000)}).catch(()=>{});},
       request:api,url:(path,id)=>{const value=new URL(url(path));value.searchParams.set('attemptId',id);return value.toString();},
       selected:slot=>{if(!slot)touch?.cancel('视频连接中断，手势已释放');renderVideoState();},frame:()=>renderVideoState(),changed:()=>renderVideoState()});
     canvas.style.visibility='hidden';wssCanvas.hidden=true;

@@ -2,12 +2,14 @@ import {VideoRace,type VideoTransport,type VideoMode,type RaceSlot,type RaceHand
 import {connectWssPlayer} from './wss-player.js';
 import {sdpCandidates,selectedIcePair,iceCandidateFailure} from './ice-diagnostics.js';
 import {createWebRtcRenderer,VideoPresentationHealth} from './webrtc-renderer.js';
+import type {WssFailureReport} from './wss-diagnostics.js';
 
 export interface VideoHandle extends RaceHandle {surface:HTMLVideoElement|HTMLCanvasElement;size:()=>{width:number;height:number}}
 export function createVideoManager(options:{providers:VideoTransport[];container:HTMLElement;paused:()=>boolean;
   request:(path:string,body?:any)=>Promise<any>;url:(path:string,id:string)=>string;
+  assetVersion?:string;report?:(diagnostic:WssFailureReport)=>void;
   selected:(slot:RaceSlot<VideoHandle>|undefined)=>void;frame:(slot:RaceSlot<VideoHandle>)=>void;changed:()=>void}){
-  const history:any[]=[];let race:VideoRace<VideoHandle>;
+  const history:any[]=[];let race:VideoRace<VideoHandle>,reportWindow=Date.now(),reports=0;
   const factory=(slot:RaceSlot<VideoHandle>,events:{ready:()=>void;failed:(reason:string)=>void}):VideoHandle=>{
     const provider=slot.provider;
     let closed=false,notified=false,connected=false,width=0,height=0,painted=0,lastFrameAt:number|null=null,pc:RTCPeerConnection|null=null,wss:ReturnType<typeof connectWssPlayer>|null=null;
@@ -15,7 +17,7 @@ export function createVideoManager(options:{providers:VideoTransport[];container
     const errors:any[]=[],start=Date.now(),timers=new Set<ReturnType<typeof setTimeout>>();let frameTimer:ReturnType<typeof setTimeout>|undefined;
     let wasPaused=options.paused(),requiredAfter=performance.now();const presentationHealth=new VideoPresentationHealth();
     const delay=(fn:()=>void,ms:number)=>{const t=setTimeout(()=>{timers.delete(t);fn();},ms);timers.add(t);return t;};
-    const record=(result:string,reason:string)=>{history.push({attemptId:slot.id,provider,result,reason,elapsedMs:Date.now()-start,startedAt:new Date(start).toISOString(),gathering:snapshot.gathering,gatherLimitMs:gatherMs,gatherTimedOut:!!snapshot.gatherTimedOut,iceErrors:[...errors],localCandidates:sdpCandidates(pc?.localDescription?.sdp||'')});if(history.length>24)history.shift();};
+    const record=(result:string,reason:string)=>{history.push({attemptId:slot.id,provider,result,reason,elapsedMs:Date.now()-start,startedAt:new Date(start).toISOString(),gathering:snapshot.gathering,gatherLimitMs:gatherMs,gatherTimedOut:!!snapshot.gatherTimedOut,iceErrors:[...errors],localCandidates:sdpCandidates(pc?.localDescription?.sdp||''),...(provider==='wss'?{diagnostic:wss?.snapshot().lastError??null}:{})});if(history.length>24)history.shift();};
     const fail=(reason:string)=>{if(closed)return;record('failed',reason);events.failed(reason);};
     const paintedFrame=()=>{if(closed)return;painted++;lastFrameAt=performance.now();snapshot.framesRendered=painted;if(frameTimer){clearTimeout(frameTimer);timers.delete(frameTimer);frameTimer=undefined;}
       if(!notified){notified=true;record('ready','实际视频帧已就绪');events.ready();}options.frame(slot);};
@@ -34,7 +36,8 @@ export function createVideoManager(options:{providers:VideoTransport[];container
       try{
         if(provider==='wss'){
           snapshot={state:'connecting',gathering:'not-applicable',path:'wss',provider:'wss'};
-          wss=connectWssPlayer({url:options.url('/ws/video',slot.id),canvas:surface as HTMLCanvasElement,onOpen:onConnected,onSize:(w,h)=>{width=w;height=h;options.changed();},onFrame:paintedFrame,onFailure:fail});return;
+          wss=connectWssPlayer({url:options.url('/ws/video',slot.id),canvas:surface as HTMLCanvasElement,onOpen:onConnected,onSize:(w,h)=>{width=w;height=h;options.changed();},onFrame:paintedFrame,onFailure:fail,
+            onDiagnostic:diagnostic=>{const now=Date.now();if(now-reportWindow>=60000){reportWindow=now;reports=0;}if(reports++<5)options.report?.({...diagnostic,attemptId:slot.id,assetVersion:options.assetVersion||null});}});return;
         }
         const config=await options.request('/api/webrtc/config',{provider,attemptId:slot.id});if(closed)return;
         servers=config.iceServers;gatherMs=config.gatherMs||gatherMs;snapshot.mode=config.iceTransportPolicy;

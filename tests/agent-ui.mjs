@@ -33,7 +33,7 @@ try {
   const context=await browser.newContext({viewport:{width:1919,height:998},permissions:['clipboard-read','clipboard-write']});
   await context.addInitScript((initial)=>{
     window.__state=initial;window.__messages=[];window.__phoneText='初始';window.__writes=[];window.__reads=[];window.__presses=[];window.__nodeActions=[];window.__taskRequests=[];
-    window.__sockets=[];
+    window.__sockets=[];window.__videoErrors=[];
     window.__offers=0;
     window.__observe=state=>{window.__state=state;for(const socket of window.__sockets)if(socket.url.includes('/ws/events'))socket.onmessage?.({data:JSON.stringify({type:'observation',state,controlAllowed:true,taskBusy:false})});};
     setInterval(()=>{if(window.__powerPaused)return;for(const socket of window.__sockets)if(socket.url.includes('/ws/events'))socket.onmessage?.({data:JSON.stringify({type:'power',screenOn:window.__state.screenOn,locked:window.__state.locked,powerCollectedAt:Date.now()})});},1000);
@@ -71,6 +71,7 @@ try {
       const path=new URL(url,location.href).pathname;
       if(!path.startsWith('/api/'))return originalFetch(url,options);
       let data={};
+      if(path==='/api/video/client-error'){window.__videoErrors.push({report:JSON.parse(options.body),headers:options.headers});if(window.__rejectDiagnostic)throw new Error('diagnostic transport failed');}
       if(path==='/api/press')window.__presses.push(JSON.parse(options.body));
       if(path==='/api/node'){
         const body=JSON.parse(options.body);window.__nodeActions.push(body);
@@ -162,6 +163,13 @@ try {
   for(const provider of ['none','coturn','cloudflare'])assert.equal(await page.locator(`[data-video-mode][value=${provider}]`).isDisabled(),true);
   assert.equal(await page.evaluate(()=>window.__rtcCreated||0),0);assert.equal(await page.evaluate(()=>window.__offers),0);
   assert.equal(await page.evaluate(()=>window.__sockets.filter(ws=>ws.url.includes('/ws/video')).length),1);
+  await page.evaluate(()=>{window.__rejectDiagnostic=true;const ws=window.__sockets.find(ws=>ws.url.includes('/ws/video'));ws.onmessage({data:JSON.stringify({type:'metadata',width:864,height:1920,codec:0})});});
+  await page.waitForFunction(()=>window.__videoErrors.length===1);
+  const diagnostic=await page.evaluate(()=>window.__videoErrors[0]);
+  assert.equal(diagnostic.report.provider,'wss');assert.equal(diagnostic.report.stage,'metadata');assert.equal(diagnostic.report.code,'WSS_CODEC_UNSUPPORTED');
+  assert.match(diagnostic.report.assetVersion,/^[a-f0-9]{16}$/);assert.match(diagnostic.report.attemptId,/^[a-f0-9-]{36}$/);
+  assert.equal(diagnostic.headers['X-Console-CSRF'],'fixture');assert.equal(diagnostic.headers['X-Console-Generation'],'0');
+  assert.equal(await page.locator('.page-status').textContent(),'在线');
   transportHTML=await render(observation,{basePath:'/',assetVersion:await readAssetVersion(),webrtc:{availableProviders:['none']},tasks:[],apiMethods:[],csrf:'fixture',pageId:'fixture',sdk:'fixture',ownsControl:false});
   await page.evaluate(()=>localStorage.setItem('android-video-mode','wss'));await page.reload();
   await page.waitForFunction(()=>window.__offers>0);
@@ -169,6 +177,6 @@ try {
   assert.equal(await page.locator('[data-video-mode][value=auto]').isChecked(),true);
   assert.equal(await page.locator('[data-video-mode][value=wss]').isDisabled(),true);
   assert.equal(await page.evaluate(()=>window.__sockets.some(ws=>ws.url.includes('/ws/video'))),false);
-  assert.deepEqual(errors,[]);const report={passed:true,checks:['one draft textbox without mirror controls','fill/type and Enter never send automatically','draft does not block navigation or JS','explicit Unicode/empty writes','phone changes never overwrite draft','focus change requires target selection','one-shot native read','failure preserves draft without retry','node jitter default and checkbox override','JS captures jitter setting','jitter setting survives reload','two viewport layouts','enlarge exit','video-only reconnect','accessible logout confirmation','WSS-only creates no WebRTC and resets unavailable saved mode','direct-only is selectable without TURN or WSS'],phoneAccessed:false,writes};
+  assert.deepEqual(errors,[]);const report={passed:true,checks:['one draft textbox without mirror controls','fill/type and Enter never send automatically','draft does not block navigation or JS','explicit Unicode/empty writes','phone changes never overwrite draft','focus change requires target selection','one-shot native read','failure preserves draft without retry','node jitter default and checkbox override','JS captures jitter setting','jitter setting survives reload','two viewport layouts','enlarge exit','video-only reconnect','accessible logout confirmation','WSS-only creates no WebRTC and resets unavailable saved mode','WSS diagnostics include version and auth headers; failed reporting leaves control online','direct-only is selectable without TURN or WSS'],phoneAccessed:false,writes};
   await writeFile('.local/agent-ui-result.json',JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify(report));
 }finally{await browser?.close();await new Promise(resolve=>server.close(resolve));}
