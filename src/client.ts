@@ -166,7 +166,7 @@ async function initialize() {
   function route(){const active=document.activeElement,ready=interactive()&&!!control&&control.readyState===1&&observation.controlAvailable&&controlAllowed&&!appsBusy, captured=active===phone&&ready;
     const focus=active===phone?'手机画面':active===text?'文本输入框':active===editor?'JS 编辑框':active===q('.node-search')?'元素搜索框':'网页';
     q('.routing').classList.toggle('captured',captured);assign(q('.focus-target'),focus);assign(q('.key-target'),captured?'手机按键':'网页');assign(q('.keyboard-backend'),observation.keyboardBackend==='uhid'?'原始键盘：UHID':'原始键盘：兼容按键；推荐文字直达');assign(q('.capture-status'),!online?'已离线':captured?'键盘输入手机 · Esc 退出':active===phone?'手机暂不可输入':'键盘留在网页');
-    q<HTMLButtonElement>('.capture').disabled=!ready;q<HTMLButtonElement>('.release').disabled=!online;assign(q('.owner-state'),online&&taskBusy?'脚本执行中':online&&!controlAllowed&&!touch?.active()?'正在处理操作':'');q<HTMLElement>('.owner-state').hidden=!q('.owner-state').textContent;
+    q<HTMLButtonElement>('.capture').disabled=!ready;q<HTMLButtonElement>('.release').disabled=!online;assign(q('.owner-state'),online&&taskBusy?'脚本执行中':online&&!controlAllowed&&!touch?.active()?'正在处理操作':'');
     applications?.controlsChanged();
   }
   function renderNodes(){const source=observation,display=shownNodes(source.nodes,filter,query),wanted=new Set(display.map(n=>n.id)),positions=new Map<Element,number>();

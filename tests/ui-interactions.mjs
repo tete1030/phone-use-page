@@ -217,19 +217,47 @@ try {
     for(const [dx,dy]of [[30,0],[30,30],[0,30]])document.dispatchEvent(new PointerEvent('pointermove',{pointerId:777,pointerType:'mouse',clientX:x+dx,clientY:y+dy,bubbles:true}));
     document.dispatchEvent(new PointerEvent('pointerup',{pointerId:777,pointerType:'mouse',clientX:x,clientY:y+30,bubbles:true}));
   },{x:center.x,y:center.y});
-  const curve=await touches();assert.deepEqual(curve.map(m=>m.action),[0,2,2,2,1]);assert.ok(curve[1].x>curve[0].x);assert.equal(curve[2].x,curve[1].x);assert.equal(curve[3].x,curve[0].x);
-  assert.deepEqual(curve.map(m=>m.seq),[0,1,2,3,4]);checks.push({name:'same-frame curve preserves every corner and ordered sequence'});
+  // Only one sample per 16 ms leaves the browser, so three moves inside a single
+  // frame collapse to the first one -- but that first one must survive: the down
+  // seeds the sampling clock, and thinning the move after it turned a fast flick
+  // into a straight DOWN->UP teleport with no intermediate shape at all.
+  const curve=await touches();
+  assert.deepEqual(curve.map(m=>m.action),[0,2,1]);
+  assert.ok(curve[1].x>curve[0].x,'the first corner must survive');
+  assert.equal(curve[2].x,curve[0].x);
+  assert.deepEqual(curve.map(m=>m.seq),[0,1,2]);
+  checks.push({name:'a same-frame drag keeps its first corner instead of teleporting'});
+  // Corners spaced wider than the sampling grid are all preserved, in order.
+  await reset();
+  await page.evaluate(({x,y})=>document.querySelector('.phone').dispatchEvent(new PointerEvent('pointerdown',
+    {pointerId:778,pointerType:'mouse',button:0,clientX:x,clientY:y,bubbles:true})),{x:center.x,y:center.y});
+  for(const [dx,dy]of [[30,0],[30,30],[0,30]]){
+    await page.evaluate(({x,y})=>document.dispatchEvent(new PointerEvent('pointermove',
+      {pointerId:778,pointerType:'mouse',clientX:x,clientY:y,bubbles:true})),{x:center.x+dx,y:center.y+dy});
+    await page.waitForTimeout(25);
+  }
+  await page.evaluate(({x,y})=>document.dispatchEvent(new PointerEvent('pointerup',
+    {pointerId:778,pointerType:'mouse',clientX:x,clientY:y,bubbles:true})),{x:center.x,y:center.y+30});
+  const slow=await touches();
+  assert.deepEqual(slow.map(m=>m.action),[0,2,2,2,1]);
+  assert.deepEqual(slow.map(m=>m.seq),[0,1,2,3,4]);
+  checks.push({name:'a drag sampled slower than the grid keeps every corner'});
   await reset();await page.evaluate(({x,y})=>{
     const phone=document.querySelector('.phone');phone.dispatchEvent(new PointerEvent('pointerdown',{pointerId:778,pointerType:'mouse',button:0,clientX:x,clientY:y,bubbles:true}));
     document.dispatchEvent(new PointerEvent('pointerup',{pointerId:778,pointerType:'mouse',clientX:x+1,clientY:y,bubbles:true}));
   },{x:center.x,y:center.y});assert.deepEqual((await touches()).map(m=>m.action),[0,2,1]);checks.push({name:'one-pixel rapid drag preserves final MOVE before UP'});
 
   await reset();await page.evaluate(({x,y})=>{
-    document.querySelector('.phone').dispatchEvent(new PointerEvent('pointerdown',{pointerId:779,pointerType:'mouse',button:0,clientX:x,clientY:y,bubbles:true}));
-    const samples=[new PointerEvent('pointermove',{clientX:x+10,clientY:y}),new PointerEvent('pointermove',{clientX:x+10,clientY:y+10}),new PointerEvent('pointermove',{clientX:x,clientY:y+10})];
+    const down=new PointerEvent('pointerdown',{pointerId:779,pointerType:'mouse',button:0,clientX:x,clientY:y,bubbles:true});
+    document.querySelector('.phone').dispatchEvent(down);
+    // Coalesced samples carry their own timestamps. Those spaced wider than the 16 ms
+    // sampling grid all survive; duplicates inside one frame collapse (covered above).
+    const at=(dx,dy,ms)=>{const sample=new PointerEvent('pointermove',{clientX:x+dx,clientY:y+dy});Object.defineProperty(sample,'timeStamp',{value:ms});return sample;};
+    const t0=down.timeStamp;
+    const samples=[at(10,0,t0+20),at(10,10,t0+40),at(0,10,t0+60)];
     const event=new PointerEvent('pointermove',{pointerId:779,clientX:x,clientY:y+10,bubbles:true});Object.defineProperty(event,'getCoalescedEvents',{value:()=>samples});document.dispatchEvent(event);
-    document.dispatchEvent(new PointerEvent('pointerup',{pointerId:779,clientX:x,clientY:y+10,bubbles:true}));
-  },{x:center.x,y:center.y});assert.equal((await touches()).filter(m=>m.action===2).length,3);checks.push({name:'browser-coalesced history keeps all available samples'});
+    document.dispatchEvent(new PointerEvent('pointerup',{pointerId:779,pointerType:'mouse',clientX:x,clientY:y+10,bubbles:true}));
+  },{x:center.x,y:center.y});assert.equal((await touches()).filter(m=>m.action===2).length,3);checks.push({name:'browser-coalesced history keeps every sample wider than the grid'});
   await reset();await page.evaluate(()=>window.__ackDisabled=true);await page.mouse.move(center.x,center.y);await page.mouse.down();await page.waitForTimeout(2300);
   assert.equal(await page.evaluate(()=>window.__messages.filter(m=>m.type==='touch-cancel').length),1);await page.mouse.up();await page.evaluate(()=>window.__ackDisabled=false);
   checks.push({name:'missing acknowledgements cancel gesture without replay'});
@@ -421,6 +449,24 @@ try {
     assert.ok(attempt.reason.includes(timedOut?'超时':'已完成'));assert.equal(await page.evaluate(()=>window.__offers),0);
     checks.push({name:timedOut?'gather timeout is distinguished from complete':'complete with no relay is distinguished from timeout'});
   }
+  // A status that appears and disappears must not move the page. Measured before
+  // this was pinned: "正在处理操作" added 15px + the 5px gap to .routing, and the
+  // whole right column (help, caption, modes, workspace) shifted down 20px.
+  const layoutOf = () => page.evaluate(() => {
+    const box = s => {const el = document.querySelector(s); if (!el) return null; const r = el.getBoundingClientRect();
+      return [Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)];};
+    return {routing: box('.routing'), help: box('.routing-help'), caption: box('.routing .phone-caption'),
+      modes: box('.routing .video-modes'), workspace: box('.workspace'), shell: box('.right-shell')};
+  });
+  const statusText = text => page.evaluate(text => {document.querySelector('.owner-state').textContent = text;}, text);
+  await statusText(''); const idleBox = await layoutOf();
+  await statusText('正在处理操作'); const busyBox = await layoutOf();
+  await statusText('脚本执行中'); const runningBox = await layoutOf();
+  await statusText(''); const resetBox = await layoutOf();
+  assert.deepEqual(busyBox, idleBox);
+  assert.deepEqual(runningBox, idleBox);
+  assert.deepEqual(resetBox, idleBox);
+  checks.push({name: 'the operation status line never resizes the routing bar'});
   assert.deepEqual(errors,[]);
   await writeFile('.local/ui-interactions/result.json',JSON.stringify({passed:checks.length,checks,pageErrors:errors,panel},null,2)+'\n');
   console.log(JSON.stringify({passed:checks.length,pageErrors:errors,panel}));

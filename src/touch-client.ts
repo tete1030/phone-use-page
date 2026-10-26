@@ -19,6 +19,10 @@ export function installTouch(options:{
   const flushMs=options.flushMs??24;
   /** t of the last sample actually queued, per pointer id. */
   const lastSubmitted=new Map<number,number>();
+  // The down itself seeds lastSubmitted, so a move that arrives within sampleMs of it used to
+  // be thinned away -- and a flick that ends inside that window kept no intermediate point at
+  // all, collapsing into a straight DOWN->UP jump. Count what was actually sent instead.
+  const submittedMoves=new Map<number,number>();
   // Back off when the server is not keeping up: a bigger batch costs one
   // message per interval instead of many.
   const flushDelay=()=>{const backlog=gesture?gesture.seq-gesture.ack:0;return backlog>64?flushMs*3:backlog>24?flushMs*2:flushMs;};
@@ -63,7 +67,7 @@ export function installTouch(options:{
     if(gesture){const previous=gesture;flush();if(gesture!==previous)return;}
     if(!gesture){if(!validGeometry(geometry))return;
       gesture={id:crypto.randomUUID(),seq:0,ack:-1,geometry,pointers:new Map(),pending:[],started:start.timeStamp};last=gesture;
-      diagnostics.receivedSamples=diagnostics.sentSamples=diagnostics.processedSamples=0;lastSubmitted.clear();
+      diagnostics.receivedSamples=diagnostics.sentSamples=diagnostics.processedSamples=0;lastSubmitted.clear();submittedMoves.clear();
       options.changed(true);
       if(!gesture)return;
       lastKeepalive=performance.now();watchdog=setInterval(()=>{
@@ -72,7 +76,7 @@ export function installTouch(options:{
       },250);
     }
     const g=gesture;if(!g)return;const ids=new Set([...g.pointers.values()].map(p=>p.id)),id=ids.has(10)?11:10,p=point(start,id,g);
-    g.pointers.set(event.pointerId,p);lastSubmitted.set(event.pointerId,p.t);diagnostics.receivedSamples++;
+    g.pointers.set(event.pointerId,p);lastSubmitted.set(event.pointerId,p.t);submittedMoves.delete(event.pointerId);diagnostics.receivedSamples++;
     if(!send(g,{type:'touch',action:0,...p},1))return;
     try{options.element.setPointerCapture(event.pointerId);}catch{}
     options.point(p.x,p.y);
@@ -115,7 +119,8 @@ export function installTouch(options:{
       // regardless, so the UP still carries the true final coordinate; only the
       // intermediate points are thinned, and the server interpolates between them.
       const lastT=lastSubmitted.get(event.pointerId);
-      if(lastT===undefined||next.t-lastT>=sampleMs){g.pending.push(next);lastSubmitted.set(event.pointerId,next.t);}
+      const sent=submittedMoves.get(event.pointerId)??0;
+      if(sent===0||lastT===undefined||next.t-lastT>=sampleMs){g.pending.push(next);lastSubmitted.set(event.pointerId,next.t);submittedMoves.set(event.pointerId,sent+1);}
       if(g.pending.length>=64){flush();if(gesture!==g)return;}}
     if(gesture?.pending.length&&!timer)timer=setTimeout(flush,flushDelay());
   },{capture:true,passive:false});

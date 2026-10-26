@@ -370,6 +370,13 @@ body{background:#f5f7fc}
 #android-observable .right-shell{grid-template-columns:minmax(0,1fr);grid-template-rows:auto auto minmax(0,1fr)}
 #android-observable .topbar{flex-wrap:wrap;height:auto;min-height:32px;row-gap:4px}
 #android-observable .routing{display:flex;flex-direction:column;align-items:stretch;gap:5px;padding:6px 8px}
+/* The status floats over the bar instead of taking a row in it. Hiding it used to grow and
+   shrink the bar by a line plus the gap, which moved the whole right column and the
+   workspace below it on every action. An overlay cannot move anything, and :empty keeps
+   the idle state invisible without the client toggling [hidden]. */
+#android-observable .routing{position:relative}
+#android-observable .routing .owner-state{position:absolute;top:6px;right:8px;z-index:2;padding:0 6px;font-size:11px;line-height:16px;white-space:nowrap;color:#4d6486;background:var(--as-panel);border:1px solid var(--as-line);border-radius:3px;pointer-events:none}
+#android-observable .routing .owner-state:empty{display:none}
 #android-observable .routing .route-summary{flex-wrap:wrap;gap:5px 12px;font-size:11px;line-height:1.5}
 #android-observable .route-summary > span{min-width:0;overflow-wrap:anywhere}
 #android-observable .routing-help{font-size:11px;line-height:1.5;overflow-wrap:anywhere}
