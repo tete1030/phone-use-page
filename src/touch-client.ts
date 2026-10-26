@@ -8,9 +8,20 @@ export function installTouch(options:{
   element:HTMLElement;bufferElement?:HTMLElement;bufferMargin?:number;geometry:()=>TouchGeometry;canStart:()=>boolean;canContinue:()=>boolean;
   send:(message:unknown)=>boolean;unavailable:()=>void;changed:(active:boolean)=>void;
   point:(x:number,y:number)=>void;error:(message:string)=>void;
+  /** Minimum spacing between forwarded samples for one pointer. */
+  sampleMs?:number;
+  /** Batch interval. Steps up when the server falls behind. */
+  flushMs?:number;
 }){
   let gesture:Gesture|null=null,last:Gesture|null=null,timer:ReturnType<typeof setTimeout>|undefined,watchdog:ReturnType<typeof setInterval>|undefined,lastProgressAt=0,lastKeepalive=0;
   let pendingEntry:PendingEntry|null=null;
+  const sampleMs=options.sampleMs??16;
+  const flushMs=options.flushMs??24;
+  /** t of the last sample actually queued, per pointer id. */
+  const lastSubmitted=new Map<number,number>();
+  // Back off when the server is not keeping up: a bigger batch costs one
+  // message per interval instead of many.
+  const flushDelay=()=>{const backlog=gesture?gesture.seq-gesture.ack:0;return backlog>64?flushMs*3:backlog>24?flushMs*2:flushMs;};
   const margin=options.bufferMargin??20;
   const validGeometry=(g:TouchGeometry)=>Object.values(g).every(Number.isFinite)&&g.width>0&&g.height>0&&g.displayWidth>0&&g.displayHeight>0;
   const inside=(p:Position,g:TouchGeometry,padding=0)=>p.clientX>=g.left-padding&&p.clientX<=g.left+g.displayWidth+padding&&p.clientY>=g.top-padding&&p.clientY<=g.top+g.displayHeight+padding;
@@ -52,7 +63,7 @@ export function installTouch(options:{
     if(gesture){const previous=gesture;flush();if(gesture!==previous)return;}
     if(!gesture){if(!validGeometry(geometry))return;
       gesture={id:crypto.randomUUID(),seq:0,ack:-1,geometry,pointers:new Map(),pending:[],started:start.timeStamp};last=gesture;
-      diagnostics.receivedSamples=diagnostics.sentSamples=diagnostics.processedSamples=0;
+      diagnostics.receivedSamples=diagnostics.sentSamples=diagnostics.processedSamples=0;lastSubmitted.clear();
       options.changed(true);
       if(!gesture)return;
       lastKeepalive=performance.now();watchdog=setInterval(()=>{
@@ -61,7 +72,7 @@ export function installTouch(options:{
       },250);
     }
     const g=gesture;if(!g)return;const ids=new Set([...g.pointers.values()].map(p=>p.id)),id=ids.has(10)?11:10,p=point(start,id,g);
-    g.pointers.set(event.pointerId,p);diagnostics.receivedSamples++;
+    g.pointers.set(event.pointerId,p);lastSubmitted.set(event.pointerId,p.t);diagnostics.receivedSamples++;
     if(!send(g,{type:'touch',action:0,...p},1))return;
     try{options.element.setPointerCapture(event.pointerId);}catch{}
     options.point(p.x,p.y);
@@ -99,9 +110,14 @@ export function installTouch(options:{
     for(const sample of events){if(!gesture)enterFromBuffer(event,sample);const g=gesture,p=g?.pointers.get(event.pointerId);if(!g||!p)continue;
       if(!options.canContinue()){cancel('手机当前不可操作，手势已取消');return;}
       if(event.cancelable)event.preventDefault();
-      const next=point(sample,p.id,g);g.pointers.set(event.pointerId,next);g.pending.push(next);diagnostics.receivedSamples++;
+      const next=point(sample,p.id,g);g.pointers.set(event.pointerId,next);diagnostics.receivedSamples++;
+      // Keep at most one sample per sampleMs. The pointer position is updated
+      // regardless, so the UP still carries the true final coordinate; only the
+      // intermediate points are thinned, and the server interpolates between them.
+      const lastT=lastSubmitted.get(event.pointerId);
+      if(lastT===undefined||next.t-lastT>=sampleMs){g.pending.push(next);lastSubmitted.set(event.pointerId,next.t);}
       if(g.pending.length>=64){flush();if(gesture!==g)return;}}
-    if(gesture?.pending.length&&!timer)timer=setTimeout(flush,8);
+    if(gesture?.pending.length&&!timer)timer=setTimeout(flush,flushDelay());
   },{capture:true,passive:false});
   document.addEventListener('pointerup',event=>{if(!gesture)enterFromBuffer(event);if(pendingEntry?.pointerId===event.pointerId)pendingEntry=null;const g=gesture,p=g?.pointers.get(event.pointerId);if(!g||!p)return;if(event.cancelable)event.preventDefault();
     const end=point(event,p.id,g);if(end.x!==p.x||end.y!==p.y){g.pending.push(end);diagnostics.receivedSamples++;}flush();if(gesture!==g)return;

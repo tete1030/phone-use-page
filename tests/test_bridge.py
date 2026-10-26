@@ -351,5 +351,32 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(error.exception.code, 'UI_WINDOW_UNAVAILABLE')
 
 
+    def test_capabilities_reports_pswipe_only_when_the_image_has_it(self):
+        calls = []
+
+        def shell(command):
+            calls.append(command)
+            if command == ['input']:
+                return SimpleNamespace(output='Usage: input [<source>] <command>\n      pswipe <duration(ms)> ...')
+            if command[:2] == ['getprop', 'ro.product.model']:
+                return SimpleNamespace(output='2209129SC\n')
+            return SimpleNamespace(output='33\n')
+
+        self.device.shell = shell
+        self.assertEqual(bridge.invoke('capabilities', {}), {'pswipe': True, 'model': '2209129SC', 'sdk': 33})
+
+        self.device.shell = lambda command: SimpleNamespace(output='Usage: input <command>\n      swipe ...')
+        self.assertFalse(bridge.invoke('capabilities', {})['pswipe'])
+
+    def test_input_gesture_runs_the_argv_on_the_device(self):
+        seen = []
+        self.device.shell = lambda command: (seen.append(command), SimpleNamespace(output=''))[1]
+        argv = ['input', 'pswipe', '400', '540', '1800', '540', '800']
+        self.assertEqual(bridge.invoke('inputGesture', {'argv': argv})['argv'], argv)
+        self.assertEqual(seen, [argv])
+        with self.assertRaises(ValueError):
+            bridge.invoke('inputGesture', {'argv': ['rm', '-rf', '/']})
+
+
 if __name__ == '__main__':
     unittest.main()

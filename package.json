@@ -10,7 +10,7 @@
     "build": "tsc --noEmit && node scripts/build.mjs",
     "start": "node --env-file-if-exists=.env dist/server.js",
     "dev": "tsx src/server.ts",
-    "test": "node --import tsx tests/core.test.ts && node --import tsx tests/console-reliability.test.ts && npm run test:auth && npm run test:webrtc && node --import tsx tests/setup.test.ts",
+    "test": "node --import tsx tests/core.test.ts && node --import tsx tests/gesture-plan.test.ts && node --import tsx tests/touch-timeline.test.ts && node --import tsx tests/console-reliability.test.ts && npm run test:auth && npm run test:webrtc && node --import tsx tests/setup.test.ts",
     "check": "tsc --noEmit",
     "test:auth": "node --import tsx tests/auth.test.ts",
     "test:webrtc": "node --import tsx tests/webrtc.test.ts && node --import tsx tests/turn.test.ts && node --import tsx tests/turn-fallback.test.ts && node --import tsx tests/wss.test.ts && node --import tsx tests/client-video-log.test.ts && node --import tsx tests/video-race.test.ts && node --import tsx tests/wss-encoder.test.ts && node --import tsx tests/video-freshness.test.ts && node --import tsx tests/video-presentation.test.ts && node --import tsx tests/session-keyboard.test.ts",

@@ -392,6 +392,25 @@ def invoke(method, params):
         d.screenshot(format='pillow').save(buffer, format='PNG')
         data = buffer.getvalue()
         return {'mime': 'image/png' if data.startswith(b'\x89PNG') else 'image/jpeg', 'data': base64.b64encode(data).decode()}
+    if method == 'capabilities':
+        # `input` with no arguments prints its usage, which is the only honest
+        # way to ask whether this image has `pswipe`; getprop only tells us
+        # which device it is.
+        usage = d.shell(['input']).output or ''
+        model = d.shell(['getprop', 'ro.product.model']).output.strip()
+        sdk = d.shell(['getprop', 'ro.build.version.sdk']).output.strip()
+        return {'pswipe': 'pswipe' in usage, 'model': model,
+                'sdk': int(sdk) if sdk.isdigit() else 0}
+    if method == 'inputGesture':
+        # Runs an `input ...` command that synthesises the whole gesture on the
+        # device: one downTime, minimum-jerk positions, 4 ms history batches.
+        # It returns only when the gesture is over.
+        argv = list(params.get('argv') or [])
+        if not argv or argv[0] != 'input':
+            raise ValueError('inputGesture expects an input argv')
+        result = d.shell(argv)
+        output = (result.output or '').strip()
+        return {'argv': argv, 'output': output[-500:]}
     raise ValueError('Unsupported bridge method: ' + method)
 
 
