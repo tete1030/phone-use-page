@@ -12,12 +12,13 @@ export interface Observation {
   locked?: boolean | null;
   snapshotId: string; collectedAt: number; nodes: AndroidNode[];
   windowId?: string; uiElapsedMs?: number;
+  captureSeq?:number; captureStartedAt?:number; observationRevision?:number;
   foregroundApp: string; focus: AndroidNode | null; focusEpoch: number;
   powerCollectedAt?:number; powerError?:string|null; focusReason?:string|null; keyboardBackend?:string; keepAwake?:boolean; keepAwakeError?:string; summary?:{battery:number|null;charging:boolean;inputMethod:string;network:string};
   uiError: string | null; videoError: string | null; controlAvailable: boolean;
 }
-export interface Target { id: string; fingerprint: string; snapshotId?: string }
-export interface ActionResult { execution?:'sent';verification?:'verified'|'not_verified'|'inconclusive'|'failed';requestId: string; status: 'ok'; backend: string; snapshotId: string; result?: unknown; jitter?:boolean; point?:{x:number;y:number} }
+export interface Target { id: string; fingerprint: string; snapshotId?: string; windowId?:string }
+export interface ActionResult { execution?:'sent';verification?:'verified'|'not_verified'|'inconclusive'|'failed';requestId: string; status: 'ok'; backend: string; snapshotId: string; result?: unknown; jitter?:boolean; point?:{x:number;y:number};sourceTarget?:string;actionTarget?:string }
 export interface Selector { text?: string; resourceId?: string; description?: string; className?: string; package?: string }
 export interface AppEntry {packageName:string;thirdParty:boolean;launchers:string[]}
 export interface ActivityEntry {index:number;token:string;userId:number;component:string;state:string}

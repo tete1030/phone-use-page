@@ -4,6 +4,7 @@ import { Bridge } from './bridge.js';
 import { Video } from './video.js';
 import { ConsoleError, type AndroidNode, type Observation, type Selector, type Target, type ActionResult, type ApplicationState, type Navigation } from './types.js';
 import {nodeTouchPoint,resolveClickOptions,type ClickOptions} from './click-options.js';
+import {resolveNodeClick,nodeClickPointClear} from './node-click.js';
 
 const pause=(ms:number)=>new Promise(resolve=>setTimeout(resolve,ms));
 const cancellablePause=(ms:number,signal?:AbortSignal)=>new Promise<void>((resolve,reject)=>{const abort=()=>{clearTimeout(timer);reject(new ConsoleError('CANCELLED','任务已停止',409));};if(signal?.aborted){reject(new ConsoleError('CANCELLED','任务已停止',409));return;}const timer=setTimeout(()=>{signal?.removeEventListener('abort',abort);resolve();},ms);signal?.addEventListener('abort',abort,{once:true});});
@@ -15,6 +16,7 @@ export class Device extends EventEmitter {
   owner?: string; private leaseUntil=0; activeTask?: string;
   authorize:(owner:string)=>void=()=>{};
   private tail: Promise<unknown> = Promise.resolve(); private collecting?: Promise<Observation>;
+  private nextCapture?:Promise<Observation>;private resettingControl?:Promise<void>;
   private sessionActive=false;
   private pendingActions=0;private manualTouchOwner?:string;
   get touching(){return !!this.manualTouchOwner;}
@@ -39,9 +41,9 @@ export class Device extends EventEmitter {
     this.video.on('status',(error:string|null)=>{this.state.videoError=error;this.state.controlAvailable=!!this.video.client?.controller;this.notify();});
     this.video.on('diagnostic',(line:string)=>{if(/INJECT_EVENTS|SecurityException/.test(line)){this.state.controlAvailable=false;this.state.videoError='设备拒绝了调试操作，请检查事件注入权限、厂商调试安全设置或设备管理策略';this.notify();}});
   }
-  private notify(){this.emit('observation',this.state);}
+  private notify(){this.state.observationRevision=(this.state.observationRevision||0)+1;this.emit('observation',structuredClone(this.state));}
   publish(){this.notify();}
-  refreshPower():Promise<void>{if(this.readingPower)return this.readingPower;this.readingPower=this.bridge.call<{screenOn:boolean;locked:boolean|null}>('power').then(power=>{const changed=this.state.screenOn!==power.screenOn||this.state.locked!==power.locked;Object.assign(this.state,power,{powerCollectedAt:Date.now(),powerError:null});if(changed)this.emit('power',{...power,powerCollectedAt:this.state.powerCollectedAt});}).catch(error=>{this.state.powerError='手机状态读取失败';this.notify();throw error;}).finally(()=>{this.readingPower=undefined;});return this.readingPower;}
+  refreshPower():Promise<void>{if(this.readingPower)return this.readingPower;this.readingPower=this.bridge.call<{screenOn:boolean;locked:boolean|null}>('power').then(power=>{Object.assign(this.state,power,{powerCollectedAt:Date.now(),powerError:null});this.emit('power',{...power,powerCollectedAt:this.state.powerCollectedAt});}).catch(error=>{this.state.powerError='手机状态读取失败';this.notify();throw error;}).finally(()=>{this.readingPower=undefined;});return this.readingPower;}
   assertScreen(){if(!this.state.screenOn)throw new ConsoleError('SCREEN_OFF','屏幕已关闭，请点击手机画面亮屏',409);if(this.state.locked!==false)throw new ConsoleError('DEVICE_LOCKED',this.state.locked?'手机已锁屏，请在手机上解锁':'手机解锁状态未知，请稍后重试',409);}
   async ensureInteractive(){if(!this.state.powerCollectedAt||Date.now()-this.state.powerCollectedAt>1500)await this.refreshPower();this.assertScreen();}
   async wake(session:string,task?:string){return this.enqueue(session,async()=>{await this.video.start();this.claim(session,task);await this.video.press(keyCodes.WAKEUP!);await this.bridge.call('unlock',{},15000,()=>this.claim(session,task));for(let i=0;i<8;i++){await pause(150);this.claim(session,task);await this.refreshPower();if(this.state.screenOn&&this.state.locked===false)break;}return {status:this.state.screenOn&&this.state.locked===false?'ok':'unlock_required',execution:'sent',verification:this.state.screenOn&&this.state.locked===false?'verified':'failed',screenOn:this.state.screenOn,locked:this.state.locked};},task);}
@@ -56,26 +58,33 @@ export class Device extends EventEmitter {
     const power=async()=>{if(this.stopped)return;if(this.sessionActive)try{await this.refreshPower();}catch{}if(!this.stopped)this.powerTimer=setTimeout(power,2000);};this.powerTimer=setTimeout(power,1000);
     this.leaseTimer=setInterval(()=>{if(this.owner&&Date.now()>this.leaseUntil&&!this.activeTask&&!this.touching){this.owner=undefined;void this.video.release();this.notify();}},2000);
   }
-  collect():Promise<Observation> {
-    if(this.collecting)return this.collecting;
+  collect({fresh=false}:{fresh?:boolean}={}):Promise<Observation> {
+    if(this.collecting){
+      if(!fresh)return this.collecting;
+      if(!this.nextCapture)this.nextCapture=this.collecting.catch(()=>{}).then(()=>{this.nextCapture=undefined;return this.collect();});
+      return this.nextCapture;
+    }
     this.collecting=this.readTree().finally(()=>{this.collecting=undefined;});return this.collecting;
   }
   private async readTree() {
+    const captureStartedAt=Date.now();
     try {
       const result=await this.bridge.call<{nodes:AndroidNode[];width:number;height:number;rotation:number;screenOn:boolean;locked:boolean|null;windowId:string;elapsedMs:number}>('snapshot');
+      const collectedAt=Date.now();
       const previousFocus=this.state.focus?.id;
       const hash=createHash('sha256').update(JSON.stringify(result.nodes)).digest('hex');
       if(hash!==this.hash){this.hash=hash;this.state.snapshotId='ui-'+(++this.generation);}
       const recentPower=await this.refreshPower().then(()=>({screenOn:this.state.screenOn,locked:this.state.locked})).catch(()=>({screenOn:result.screenOn,locked:result.locked}));
-      Object.assign(this.state,{connected:true,nodes:result.nodes,width:result.width,height:result.height,rotation:result.rotation,...recentPower,windowId:result.windowId,uiElapsedMs:result.elapsedMs,collectedAt:Date.now(),uiError:null});
+      Object.assign(this.state,{connected:true,nodes:result.nodes,width:result.width,height:result.height,rotation:result.rotation,...recentPower,windowId:result.windowId,uiElapsedMs:result.elapsedMs,collectedAt,captureStartedAt,captureSeq:(this.state.captureSeq||0)+1,uiError:null});
       this.state.foregroundApp=result.nodes.find(n=>n.package&&!n.package.startsWith('com.android.systemui'))?.package||result.nodes[0]?.package||'';
       const fields=result.nodes.filter(n=>n.focused&&n.editable&&!n.password);this.state.focus=fields.length===1?fields[0]!:null;this.state.focusReason=fields.length>1?'AMBIGUOUS_FOCUS':fields.length===1?null:'NO_EDITABLE_FOCUS';
       if(previousFocus!==this.state.focus?.id)this.state.focusEpoch++;
-      this.notify();return this.state;
-    } catch(error){this.state.connected=false;this.state.foregroundApp='';this.state.uiError=String(error);if(this.state.focus){this.state.focus=null;this.state.focusEpoch++;}this.notify();throw error;}
+      this.notify();return structuredClone(this.state);
+    } catch(error){if(error instanceof ConsoleError&&['BRIDGE_EXIT','BRIDGE_TIMEOUT','BRIDGE_CLOSED'].includes(error.code))this.state.connected=false;this.state.foregroundApp='';this.state.uiError=String(error);if(this.state.focus){this.state.focus=null;this.state.focusEpoch++;}this.notify();throw error;}
   }
   claim(session:string,task?:string,manual=false) {
     this.authorize(session);
+    if(this.resettingControl)throw new ConsoleError('CONTROL_RESETTING','正在释放控制，请稍后操作',409);
     if(this.manualTouchOwner&&(!manual||this.manualTouchOwner!==session))throw new ConsoleError('DEVICE_BUSY','触摸手势进行中，请松手后执行其他动作',409);
     if(task&&this.activeTask!==task)throw new ConsoleError('CANCELLED','任务已停止，未执行后续动作',409);
     if(this.activeTask&&this.activeTask!==task)throw new ConsoleError('TASK_BUSY','脚本正在控制设备，请先停止任务',409);
@@ -83,13 +92,18 @@ export class Device extends EventEmitter {
     const changed=this.owner!==session;this.owner=session;this.leaseUntil=Date.now()+30000;if(changed)this.notify();
   }
   heartbeat(session:string){if(this.owner===session)this.leaseUntil=Date.now()+30000;}
-  canClaim(session:string){return !this.activeTask&&!this.touching&&(!this.owner||this.owner===session||Date.now()>=this.leaseUntil);}
+  canClaim(session:string){return !this.activeTask&&!this.touching&&!this.pendingActions&&!this.resettingControl&&(!this.owner||this.owner===session||Date.now()>=this.leaseUntil);}
   async release(session:string){if(this.owner!==session)return;if(this.activeTask)throw new ConsoleError('TASK_BUSY','请先停止脚本再释放设备',409);await this.video.release();this.endTouch(session);if(this.owner===session)this.owner=undefined;this.notify();}
-  async drain(){await this.tail.catch(()=>{});await this.video.release();}
-  enqueue<T>(session:string,fn:()=>Promise<T>,task?:string):Promise<T>{this.claim(session,task);this.pendingActions++;const work=this.tail.then(async()=>{this.claim(session,task);return fn();}).finally(()=>this.pendingActions--);this.tail=work.catch(()=>{});return work;}
+  resetControl():Promise<void>{
+    if(this.resettingControl)return this.resettingControl;
+    this.resettingControl=this.tail.catch(()=>{}).then(()=>this.video.release()).catch(error=>{this.state.controlAvailable=false;this.state.videoError='控制释放失败，请重新连接';throw error;}).finally(()=>{this.resettingControl=undefined;this.notify();});
+    this.notify();return this.resettingControl;
+  }
+  async drain(){await this.resetControl();}
+  enqueue<T>(session:string,fn:()=>Promise<T>,task?:string,announce=true):Promise<T>{this.claim(session,task);const revision=this.state.observationRevision;this.pendingActions++;if(announce)this.notify();const work=this.tail.then(async()=>{this.claim(session,task);return fn();}).finally(()=>{this.pendingActions--;if(announce||!this.pendingActions&&this.state.observationRevision!==revision)this.notify();});this.tail=work.catch(()=>{});return work;}
   async target(target:Target):Promise<AndroidNode> {
-    await this.collect();const node=this.state.nodes.find(n=>n.id===target.id);
-    if(!node||node.fingerprint!==target.fingerprint)throw new ConsoleError('STALE_TARGET','所选节点已变化，请重新查看属性',409);
+    await this.collect({fresh:true});const node=this.state.nodes.find(n=>n.id===target.id);
+    if(!node||node.fingerprint!==target.fingerprint||target.windowId&&target.windowId!==this.state.windowId)throw new ConsoleError('STALE_TARGET','所选节点已变化，请重新查看属性',409);
     if(!node.enabled||!node.visible)throw new ConsoleError('UNAVAILABLE_TARGET','目标不可用或不在有效屏幕区域',409);
     return node;
   }
@@ -109,11 +123,13 @@ export class Device extends EventEmitter {
     return {x:x*this.video.width/width,y:y*this.video.height/height};
   }
   private async tapAt(x:number,y:number,duration=60){const p=this.coordinates(x,y);await this.video.touch(0,0n,p.x,p.y);try{await pause(duration);}finally{await this.video.touch(1,0n,p.x,p.y);}}
-  async nodeAction(session:string,target:Target,action:string,value?:unknown,task?:string,clickOptions?:ClickOptions) {
+  async nodeAction(session:string,target:Target|null,action:string,value?:unknown,task?:string,clickOptions?:ClickOptions,selector?:Selector) {
     const options=resolveClickOptions(clickOptions);
     return this.enqueue(session,async()=>{
       await this.ensureInteractive();
-      const n=await this.target(target);let textVerification:ActionResult['verification'];let point:{x:number;y:number}|undefined;
+      let n:AndroidNode;
+      if(target)n=await this.target(target);else{await this.collect({fresh:true});n=this.find(selector!);if(!n.enabled||!n.visible)throw new ConsoleError('UNAVAILABLE_TARGET','目标不可用或不在有效屏幕区域',409);}
+      let textVerification:ActionResult['verification'];let point:{x:number;y:number}|undefined,actionTarget:AndroidNode|undefined;
       const touch=async(duration=60)=>{point=nodeTouchPoint(n,this.state.width,this.state.height,options.jitter);await this.tapAt(point.x,point.y,duration);};
       this.claim(session,task);
       if(action!=='setText'&&!this.state.controlAvailable)throw new ConsoleError('NO_CONTROL','设备未允许触摸或按键注入',503);
@@ -125,16 +141,23 @@ export class Device extends EventEmitter {
         if(!n.checkable||!n.clickable||typeof value!=='boolean')throw new ConsoleError('UNSUPPORTED_ACTION','该节点未报告可用开关能力');
         if(n.checked!==value)await touch();
       } else if(action==='focus') {if(!n.editable)throw new ConsoleError('UNSUPPORTED_ACTION','节点不是输入框');await this.bridge.call('clickNode',{selector:n.selector,instance:n.instance,bounds:n.bounds},15000,()=>this.claim(session,task));}
-      else if(action==='click') {if(!n.clickable)throw new ConsoleError('UNSUPPORTED_ACTION','节点未报告点击能力');await touch();}
+      else if(action==='click') {
+        const resolved=resolveNodeClick(n,this.state.nodes,this.state.width,this.state.height);
+        if(!resolved)throw new ConsoleError('UNSUPPORTED_ACTION','节点没有可用的点击目标，请选择所在行或直接操作画面');
+        actionTarget=resolved.target;point=nodeTouchPoint({...n,bounds:resolved.bounds},this.state.width,this.state.height,options.jitter);
+        if(n.id!==actionTarget.id&&!nodeClickPointClear(n,this.state.nodes,point.x,point.y))throw new ConsoleError('UNSUPPORTED_ACTION','落点有其他控件，未发送点击');
+        if(this.state.windowId)await this.bridge.call('validateNodeClick',{windowId:this.state.windowId,source:n,actionTarget,point},15000,()=>{this.claim(session,task);this.assertScreen();});
+        this.claim(session,task);await this.tapAt(point.x,point.y);
+      }
       else if(action==='longPress') {if(!n.longClickable)throw new ConsoleError('UNSUPPORTED_ACTION','节点未报告长按能力');await touch(typeof value==='number'?Math.min(Math.max(value,400),3000):700);}
       else throw new ConsoleError('UNSUPPORTED_ACTION','不支持的节点动作');
-      await pause(100);if(action==='setText')await this.afterApplicationAction();else await this.collect();
+      await pause(100);await this.afterApplicationAction();
       if(action==='setText'&&textVerification!=='verified'){
         const error=new ConsoleError(textVerification==='failed'?'TEXT_VERIFY_FAILED':'TEXT_RESULT_UNKNOWN',textVerification==='failed'?'填写已发送，但手机文字与原文不同；请检查手机，不会自动重试':'填写已发送，无法确认原目标内容；请先观察手机，不要直接重试',409);
         error.execution='sent';error.verification=textVerification;throw error;
       }
-      if(action==='setChecked'){const current=this.state.nodes.find(x=>x.id===n.id);if(!current||current.checked!==value)throw new ConsoleError('VERIFY_FAILED','开关状态未达到期望值，请观察手机',409);}
-      return {requestId:randomUUID(),status:'ok',execution:'sent',verification:action==='setText'?textVerification:action==='setChecked'?'verified':action==='focus'&&this.state.focus?.id===n.id?'verified':'not_verified',backend:action==='setText'?'uiautomator2.setText':action==='focus'?'uiautomator2.focus':'scrcpy-coordinate-compatibility',...(point?{jitter:options.jitter,point}:{}),snapshotId:this.state.snapshotId};
+      if(action==='setChecked'){const current=this.state.nodes.find(x=>x.id===n.id);if(this.state.uiError||!current||current.checked!==value){const error=new ConsoleError(this.state.uiError?'VERIFY_RESULT_UNKNOWN':'VERIFY_FAILED',this.state.uiError?'无法读取开关结果，请先观察手机':'开关状态未达到期望值，请观察手机',409);if(point)error.execution='sent';error.verification=this.state.uiError?'inconclusive':'failed';throw error;}}
+      return {requestId:randomUUID(),status:'ok',execution:'sent',verification:action==='setText'?textVerification:action==='setChecked'?'verified':action==='focus'&&this.state.focus?.id===n.id?'verified':'not_verified',backend:action==='setText'?'uiautomator2.setText':action==='focus'?'uiautomator2.focus':'scrcpy-coordinate-compatibility',...(point?{jitter:options.jitter,point}:{}),...(actionTarget?{sourceTarget:n.id,actionTarget:actionTarget.id}:{}),snapshotId:this.state.snapshotId,uiError:this.state.uiError};
     },task);
   }
   async panel(session:string,kind:'notifications'|'settings',task?:string){return this.enqueue(session,async()=>{await this.ensureInteractive();await this.video.panel(kind);await this.afterApplicationAction();return {execution:'sent',verification:'not_verified',snapshotId:this.state.snapshotId};},task);}
@@ -152,7 +175,7 @@ export class Device extends EventEmitter {
     return this.readingApplications;
   }
   navigation():Promise<Navigation>{return this.bridge.call('navigation');}
-  private async afterApplicationAction(){this.applications=undefined;if(this.collecting)try{await this.collecting;}catch{}try{await this.collect();}catch{}}
+  private async afterApplicationAction(){this.applications=undefined;try{await this.collect({fresh:true});}catch{}}
   async openApp(session:string,packageName:string,component?:string,task?:string) {
     return this.enqueue(session,async()=>{const result=await this.bridge.call('openApp',{packageName,component},15000,()=>this.claim(session,task));await this.afterApplicationAction();return {status:'ok',execution:'sent',verification:this.state.foregroundApp===packageName?'verified':'inconclusive',result,snapshotId:this.state.snapshotId,uiError:this.state.uiError};},task);
   }
@@ -209,7 +232,7 @@ export class Device extends EventEmitter {
         const a=this.coordinates(x-start/2,y),b=this.coordinates(x+start/2,y);await this.video.touch(0,0n,a.x,a.y);await this.video.touch(0,1n,b.x,b.y);
         try{for(let i=1;i<=20;i++){if(signal?.aborted)throw new ConsoleError('CANCELLED','任务已停止');this.claim(session,task);this.assertScreen();const distance=start+(end-start)*i/20;const left=this.coordinates(x-distance/2,y),right=this.coordinates(x+distance/2,y);await this.video.touch(2,0n,left.x,left.y);await this.video.touch(2,1n,right.x,right.y);await pause(20);}}finally{await this.video.release();}
       } else throw new ConsoleError('INVALID_GESTURE','不支持的手势');
-      await this.collect();return {status:'ok',snapshotId:this.state.snapshotId};
+      await this.afterApplicationAction();return {status:'ok',execution:'sent',verification:'not_verified',snapshotId:this.state.snapshotId,uiError:this.state.uiError};
     },task);
   }
   async stop(){this.stopped=true;clearTimeout(this.summaryTimer);await this.setKeepAwake(false);clearTimeout(this.fullTimer);clearTimeout(this.powerTimer);clearInterval(this.leaseTimer);await this.video.close();this.bridge.close();}

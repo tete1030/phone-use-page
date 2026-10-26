@@ -91,7 +91,7 @@ installWebRtcRoutes(app,endpoint,session,rtc);
 installClientVideoLog(app,endpoint,{session:req=>session(req,true,true)});
 app.post(endpoint('/api/video/select'),req=>{const s=session(req,true),p=z.object({attemptId:z.string().uuid()}).strict().parse(req.body);return rtc.select(s.owner,p.attemptId);});
 app.post(endpoint('/api/video/cancel'),async req=>{const s=session(req,true),p=z.object({attemptId:z.string().uuid()}).strict().parse(req.body);await rtc.cancel(s.owner,p.attemptId);return {ok:true};});
-app.post(endpoint('/api/refresh'),async req=>{session(req,true);return device.collect();});
+app.post(endpoint('/api/refresh'),async req=>{session(req,true);return device.collect({fresh:true});});
 app.get(endpoint('/api/timeline'),req=>{const s=session(req);return audit.actions(s.owner);});
 app.get(endpoint('/api/sdk'),async req=>{session(req);return {version:SDK_VERSION,methods:apiMethods};});
 app.get(endpoint('/api/app-state'),async req=>{session(req);const p=z.object({refreshCatalog:z.enum(['0','1']).optional()}).parse(req.query);return device.appState(p.refreshCatalog==='1');});
@@ -103,7 +103,7 @@ app.post(endpoint('/api/activity'),req=>{const s=session(req,true);pages.activit
 app.get(endpoint('/api/screenshot'),async(req,reply)=>{const s=session(req);const image=await device.bridge.call('screenshot');pages.requireOwner(s.owner);return reply.type(image.mime).header('Content-Disposition','attachment; filename=phone-'+Date.now()+'.'+(image.mime==='image/png'?'png':'jpg')).send(Buffer.from(image.data,'base64'));});
 app.post(endpoint('/api/panel'),async req=>{const s=session(req,true),p=z.object({requestId:z.string().uuid(),kind:z.enum(['notifications','settings'])}).parse(req.body);return once(req,()=>device.panel(s.owner,p.kind));});
 app.post(endpoint('/api/clipboard'),async req=>{const s=session(req,true),p=z.object({write:z.boolean().default(false),text:z.string().max(32768).optional()}).parse(req.body);pages.activity(s.owner);return device.enqueue(s.owner,async()=>{await device.ensureInteractive();return device.bridge.call('clipboard',p);});});
-const targetSchema=z.object({id:z.string().max(200),fingerprint:z.string().max(100),snapshotId:z.string().max(100).optional()});
+const targetSchema=z.object({id:z.string().max(200),fingerprint:z.string().max(100),snapshotId:z.string().max(100).optional(),windowId:z.string().max(1000).optional()});
 app.post(endpoint('/api/node/text'),async req=>{const s=session(req,true),p=z.object({target:targetSchema}).strict().parse(req.body);pages.activity(s.owner);return device.readText(s.owner,p.target);});
 const clickOptionsSchema=z.object({jitter:z.boolean().optional()}).strict();
 const requestCache=new Map<string,{hash:string;work:Promise<unknown>;time:number}>();
@@ -137,7 +137,7 @@ app.get(endpoint('/ws/events'),{websocket:true},(ws,req)=>{
 installWssVideoRoute(app,endpoint,{session,originAllowed,pages,rtc,video:device.video,serialize:serialized,parallel:rtc});
 app.get(endpoint('/ws/control'),{websocket:true},(ws,req)=>{
   let s:ReturnType<typeof session>;try{s=session(req,false,true);if(!originAllowed(req.headers.origin,req.headers.host))throw new ConsoleError('ORIGIN_REJECTED','Origin rejected',403);pages.attachChannel(s.connection,ws,'control',Number((req.query as any).generation??0));websocketAudit(req,'/ws/control',s.owner,'ws_open');}catch(error){websocketAudit(req,'/ws/control',undefined,'ws_rejected',undefined,(error as any).code);rejectSocket(ws,error);return;}
-  const touch=new TouchControl(device,s.owner,data=>{if(ws.readyState===1)ws.send(JSON.stringify(data));},Date.now,()=>{if(controls.get(s.owner)!==ws||ws.readyState!==1)throw new ConsoleError('CONTROL_REPLACED','控制通道已更换，旧手势未重放',409);});
+  const touch=new TouchControl(device,s.owner,data=>{const result=data as any;if(result.summary||result.type==='error')audit.record({at:new Date().toISOString(),method:'EVENT',path:'/ws/control',status:result.type==='error'?409:200,ip:req.ip,client:String(req.headers['user-agent']||'').slice(0,300),owner:s.owner,requestId:typeof result.gesture==='string'?result.gesture.slice(0,64):undefined,action:result.summary?.kind||'touch',verification:result.verification||'not_verified',errorCode:result.code});if(ws.readyState===1)ws.send(JSON.stringify(data));},Date.now,()=>{if(controls.get(s.owner)!==ws||ws.readyState!==1)throw new ConsoleError('CONTROL_REPLACED','控制通道已更换，旧手势未重放',409);});
   const previous=controls.get(s.owner) as typeof ws|undefined;if(previous&&previous!==ws)previous.close(4001,'CONTROL_REPLACED');controls.set(s.owner,ws);let tail=Promise.resolve(),inputEpoch=0;
   ws.on('message',data=>{if(controls.get(s.owner)!==ws)return;try{pages.requireOwner(s.owner);}catch{ws.close(4002,'CONNECTION_RECOVERING');return;}let p:any;try{p=JSON.parse(String(data));}catch{ws.close(1003,'Invalid JSON');return;}
     if(pages.idle(s.owner)){disconnect(s.connection,'IDLE_TIMEOUT');return;}
@@ -145,7 +145,7 @@ app.get(endpoint('/ws/control'),{websocket:true},(ws,req)=>{
     if(p.type==='keys-release'){if(device.owner===s.owner&&!device.activeTask)void device.video.releaseKeys().catch(()=>{});return;}
     if(p.type==='touch-keepalive'){if(typeof p.gesture==='string')touch.keepalive(p.gesture);return;}
     if(p.type==='touch-cancel'){void touch.cancel(typeof p.gesture==='string'?p.gesture:undefined);return;}
-    if((p.type==='touch'||p.type==='touch-move')&&p.gesture){pages.activity(s.owner);touch.receive(p);if(p.type==='touch')audit.record({at:new Date().toISOString(),method:'EVENT',path:'/ws/control',status:200,ip:req.ip,client:String(req.headers['user-agent']||'').slice(0,300),owner:s.owner,action:p.action===0?'touch-down':'touch-up',verification:'not_verified'});return;}
+    if((p.type==='touch'||p.type==='touch-move')&&p.gesture){pages.activity(s.owner);touch.receive(p);return;}
     if(p.type==='release'){inputEpoch++;void touch.cancel();if(device.owner===s.owner&&!device.activeTask)void device.video.release().catch(()=>{});return;}
     pages.activity(s.owner);const epoch=inputEpoch;tail=tail.then(()=>device.enqueue(s.owner,async()=>{
     if(epoch!==inputEpoch||ws.readyState!==1||controls.get(s.owner)!==ws)throw new ConsoleError('CONTROL_REPLACED','控制连接或输入焦点已更新，旧事件未重放',409);
@@ -154,8 +154,8 @@ app.get(endpoint('/ws/control'),{websocket:true},(ws,req)=>{
     else if(p.type==='key'){const x=z.object({action:z.number().int().min(0).max(1),code:z.number().int().min(0).max(400),meta:z.number().int().min(0).max(200000).default(0),repeat:z.number().int().min(0).max(1000).default(0)}).parse(p);if(x.action===0)await device.ensureInteractive();device.claim(s.owner);await device.video.key(x.action,x.code,x.meta,x.repeat);}
     else throw new ConsoleError('INVALID_CONTROL','不支持的控制消息');
     if(p.kind!=='move')audit.record({at:new Date().toISOString(),method:'EVENT',path:'/ws/control',status:200,ip:req.ip,client:String(req.headers['user-agent']||'').slice(0,300),owner:s.owner,requestId:typeof p.request==='string'?p.request.slice(0,64):undefined,action:p.type,verification:'not_verified'});
-    if(ws.readyState===1)ws.send(JSON.stringify({type:'ack',kind:p.kind,request:p.request,execution:'sent',verification:'not_verified',backend:device.video.keyboardBackend}));
-  })).catch(error=>{if(ws.readyState===1)ws.send(JSON.stringify({type:'error',message:String(error)}));});});
+    if(ws.readyState===1)ws.send(JSON.stringify({type:'ack',kind:p.kind,action:p.action,request:p.request,execution:'sent',verification:'not_verified',backend:device.video.keyboardBackend}));
+  },undefined,false)).catch(error=>{if(ws.readyState===1)ws.send(JSON.stringify({type:'error',message:String(error)}));});});
   ws.once('close',(code,reason)=>{websocketAudit(req,'/ws/control',s.owner,'ws_close',code,String(reason));inputEpoch++;void touch.close().catch(()=>{});if(controls.get(s.owner)===ws)controls.delete(s.owner);if(pages.lostChannel(s.connection,ws,'control'))suspendConnection(s.connection,'CONTROL_CLOSED');});
 });
 function publicTask(t:any,owner:string){const {owner:taskOwner,code,...rest}=t;return {...rest,canStop:taskOwner===owner,code:taskOwner===owner?code:undefined};}

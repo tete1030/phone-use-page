@@ -44,6 +44,14 @@ test('WSS latency probe works during pause without sending or counting video fra
     const count=f.ws.sent.length;f.ws.emit('message',Buffer.from('{"type":"ping","id":-1}'));assert.equal(f.ws.sent.length,count);
   }finally{f.video.closeViewers();}
 });
+test('keyframe resync is throttled, preserves the socket and suppresses delta frames',async()=>{
+  const f=videoFixture();try{await f.video.view(f.ws as any);f.video.publishPacket(config);f.video.publishPacket(frame(true));const initial=f.resets();
+    f.ws.emit('message',Buffer.from('{"type":"keyframe"}'));f.ws.emit('message',Buffer.from('{"type":"keyframe"}'));assert.equal(f.resets(),initial+1);
+    const before=f.video.wssDiagnostics().videoFrameMessagesSent;f.video.publishPacket(frame(false));assert.equal(f.video.wssDiagnostics().videoFrameMessagesSent,before);
+    f.video.publishPacket(frame(true));assert.equal(f.video.wssDiagnostics().videoFrameMessagesSent,before+1);assert.equal(f.ws.readyState,1);
+    f.video.setVideoPaused(true,'locked');f.ws.emit('message',Buffer.from('{"type":"keyframe"}'));assert.equal(f.resets(),initial+1);
+  }finally{f.video.closeViewers();}
+});
 test('slow and disconnected WSS viewers cannot build unbounded server output',async()=>{
   const f=videoFixture();await f.video.view(f.ws as any);f.ws.bufferedAmount=2_000_001;
   f.video.publishPacket(frame(true));assert.equal(f.ws.readyState,3);assert.equal(f.video.viewers.size,0);

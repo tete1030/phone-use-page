@@ -5,7 +5,7 @@ import {createWebRtcRenderer,VideoPresentationHealth} from './webrtc-renderer.js
 import type {WssFailureReport} from './wss-diagnostics.js';
 
 export interface VideoHandle extends RaceHandle {surface:HTMLVideoElement|HTMLCanvasElement;size:()=>{width:number;height:number}}
-export function createVideoManager(options:{providers:VideoTransport[];container:HTMLElement;paused:()=>boolean;
+export function createVideoManager(options:{providers:VideoTransport[];container:HTMLElement;paused:()=>boolean;pauseReason?:()=>string|null;
   request:(path:string,body?:any)=>Promise<any>;url:(path:string,id:string)=>string;
   assetVersion?:string;report?:(diagnostic:WssFailureReport)=>void;
   selected:(slot:RaceSlot<VideoHandle>|undefined)=>void;frame:(slot:RaceSlot<VideoHandle>)=>void;changed:()=>void}){
@@ -15,7 +15,7 @@ export function createVideoManager(options:{providers:VideoTransport[];container
     let closed=false,notified=false,connected=false,width=0,height=0,painted=0,lastFrameAt:number|null=null,pc:RTCPeerConnection|null=null,wss:ReturnType<typeof connectWssPlayer>|null=null;
     let snapshot:any={state:'connecting',gathering:'not-started',framesRendered:0},servers:any[]=[],gatherMs=provider==='cloudflare'?45000:12000;
     const errors:any[]=[],start=Date.now(),timers=new Set<ReturnType<typeof setTimeout>>();let frameTimer:ReturnType<typeof setTimeout>|undefined;
-    let wasPaused=options.paused(),requiredAfter=performance.now();const presentationHealth=new VideoPresentationHealth();
+    let wasPaused=options.pauseReason?.()==='power_unknown'?false:options.paused(),requiredAfter=performance.now();const presentationHealth=new VideoPresentationHealth();
     const delay=(fn:()=>void,ms:number)=>{const t=setTimeout(()=>{timers.delete(t);fn();},ms);timers.add(t);return t;};
     const record=(result:string,reason:string)=>{history.push({attemptId:slot.id,provider,result,reason,elapsedMs:Date.now()-start,startedAt:new Date(start).toISOString(),gathering:snapshot.gathering,gatherLimitMs:gatherMs,gatherTimedOut:!!snapshot.gatherTimedOut,iceErrors:[...errors],localCandidates:sdpCandidates(pc?.localDescription?.sdp||''),...(provider==='wss'?{diagnostic:wss?.snapshot().lastError??null}:{})});if(history.length>24)history.shift();};
     const fail=(reason:string)=>{if(closed)return;record('failed',reason);events.failed(reason);};
@@ -24,13 +24,13 @@ export function createVideoManager(options:{providers:VideoTransport[];container
     const renderer=provider==='wss'?null:createWebRtcRenderer({onFrame:(w,h)=>{width=w;height=h;paintedFrame();},onFailure:fail});
     const surface=renderer?.surface||document.createElement('canvas');
     surface.className='video-candidate';surface.dataset.provider=provider;surface.setAttribute('aria-hidden','true');options.container.append(surface);
-    const pauseChanged=()=>{if(closed)return;const paused=options.paused();if(paused){if(frameTimer){clearTimeout(frameTimer);timers.delete(frameTimer);frameTimer=undefined;}if(connected&&!notified){notified=true;record('ready','设备暂停，连接已就绪');events.ready();}}
-      else {if(wasPaused){requiredAfter=performance.now();renderer?.resume();}if(connected&&(lastFrameAt===null||lastFrameAt<requiredAfter)&&!frameTimer&&!document.hidden)frameTimer=delay(()=>{frameTimer=undefined;if(!options.paused()&&!document.hidden)fail('连接已建立但画面未恢复');},30000);}wasPaused=paused;};
+    const pauseChanged=()=>{if(closed)return;const paused=options.paused();wss?.setPaused(paused);if(paused){if(frameTimer){clearTimeout(frameTimer);timers.delete(frameTimer);frameTimer=undefined;}if(connected&&!notified&&options.pauseReason?.()!=='power_unknown'){notified=true;record('ready','设备暂停，连接已就绪');events.ready();}}
+      else {if(wasPaused){requiredAfter=performance.now();renderer?.resume();}if(connected&&(lastFrameAt===null||lastFrameAt<requiredAfter)&&!frameTimer&&!document.hidden)frameTimer=delay(()=>{frameTimer=undefined;if(!options.paused()&&!document.hidden)fail('连接已建立但画面未恢复');},30000);}if(options.pauseReason?.()!=='power_unknown')wasPaused=paused;};
     const visible=()=>{if(closed)return;if(document.hidden){if(frameTimer){clearTimeout(frameTimer);timers.delete(frameTimer);frameTimer=undefined;}}else{requiredAfter=performance.now();pauseChanged();}};
     document.addEventListener('visibilitychange',visible);
     const connectDeadline=delay(()=>fail('连接建立超时'),provider==='cloudflare'?120000:60000);
     const onConnected=()=>{if(closed)return;connected=true;snapshot.state='connected';clearTimeout(connectDeadline);timers.delete(connectDeadline);pauseChanged();options.changed();};
-    const handle:VideoHandle={get surface(){return renderer?.surface||surface;},pauseChanged,size:()=>({width,height}),snapshot:()=>({...snapshot,...(renderer?.snapshot()||{renderer:'webcodecs-bitmap-canvas'}),attemptId:slot.id,width,height,framesRendered:painted,lastFrameAt,paused:options.paused(),media:wss?{...wss.snapshot(),framesRendered:painted,codec:'video/H264'}:snapshot.media,iceErrors:[...errors]}),
+    const handle:VideoHandle={get surface(){return renderer?.surface||surface;},pauseChanged,size:()=>({width,height}),snapshot:()=>({...snapshot,...(renderer?.snapshot()||{renderer:'webcodecs-bitmap-canvas'}),attemptId:slot.id,width,height,framesRendered:painted,lastFrameAt,paused:options.pauseReason?.()==='power_unknown'?null:options.paused(),pauseReason:options.pauseReason?.()??null,media:wss?{...wss.snapshot(),framesRendered:painted,codec:'video/H264'}:snapshot.media,iceErrors:[...errors]}),
       close:()=>{if(closed)return;closed=true;document.removeEventListener('visibilitychange',visible);for(const t of timers)clearTimeout(t);timers.clear();renderer?.close();pc?.close();wss?.close();handle.surface.remove();void options.request('/api/video/cancel',{attemptId:slot.id}).catch(()=>{});}};
     void (async()=>{
       try{

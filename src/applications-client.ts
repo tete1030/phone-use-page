@@ -17,13 +17,13 @@ export function installApplications(root:HTMLElement,options:{api:(path:string)=
     q<HTMLButtonElement>('.applications-refresh').disabled=!options.online()||loading||busy;
   }
   async function action(path:string,data:any){if(path.endsWith('/back')&&data.steps>1&&!await confirmAction('连续返回'+data.steps+'次，可能关闭输入法或退出应用，确认？'))return;if(busy||!options.canAct()||error)return;const current=epoch;busy=true;options.busyChanged(true);controlsChanged();
-    try{await options.perform(path,data);if(current===epoch)await load();}catch(e){if(options.online()&&current===epoch){error=String(e);assign(q('.applications-status'),error+'；动作未自动重放');}}
+    try{await options.perform(path,data);if(current===epoch)await load();}catch(e){if(options.online()&&current===epoch){error=String(e);q('.applications-status').hidden=false;assign(q('.applications-status'),error+'；动作未自动重放');}}
     finally{if(current===epoch){busy=false;options.busyChanged(false);controlsChanged();}}
   }
   function render(){if(!state)return;const nav=state.navigation,current=nav.current,task=nav.tasks.find(t=>t.taskId===current?.taskId);
     assign(q('.application-current'),current?`当前任务 #${current.taskId} · ${current.component}`:'当前 Activity 未知');
     assign(q('.activity-stack'),task?.activities.length?task.activities.map(a=>`${a.index}: ${a.component} [${a.state}]`).join(' → '):'系统 Activity 层级未知');
-    assign(q('.applications-status'),error||`${new Date(state.collectedAt).toLocaleTimeString('zh-CN',{hourCycle:'h23',hour:'2-digit',minute:'2-digit',second:'2-digit'})} 更新 · ${nav.locked===true?'手机已锁屏，解锁后可操作':nav.locked===null?'正在确认手机状态':'应用列表自动更新'}`);
+    assign(q('.applications-status'),error);q('.applications-status').hidden=!error;
     const search=query.trim().toLowerCase(),match=(value:string)=>!search||value.toLowerCase().includes(search);
     for(const mode of modes){
       const list=lists[mode]!,rows=columns.get(mode)!;
@@ -56,7 +56,7 @@ export function installApplications(root:HTMLElement,options:{api:(path:string)=
     controlsChanged();
   }
   async function load(refresh=false){if(loading||!options.online())return;const current=epoch;loading=true;controlsChanged();try{const next=await options.api('/api/app-state'+(refresh?'?refreshCatalog=1':''));if(!options.online()||current!==epoch)return;state=next;error='';render();}
-    catch(e){if(options.online()&&current===epoch){error=String(e);assign(q('.applications-status'),'应用数据不可用：'+error+'；旧数据保留，动作暂停');}}
+    catch(e){if(options.online()&&current===epoch){error=String(e);q('.applications-status').hidden=false;assign(q('.applications-status'),'应用数据不可用：'+error+'；旧数据保留，动作暂停');}}
     finally{if(current===epoch){loading=false;controlsChanged();}}
   }
   async function poll(){const current=epoch;clearTimeout(timer);if(!options.online())return;await load();if(options.online()&&current===epoch)timer=setTimeout(poll,3500);}

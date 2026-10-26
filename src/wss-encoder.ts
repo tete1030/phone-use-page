@@ -73,6 +73,7 @@ export class WssEncoder extends EventEmitter {
     if(this.needsKey){if(!packet.keyframe)return;this.needsKey=false;if(this.inputConfig)child.stdin.write(this.inputConfig);}
     if(child.stdin.writableLength>2_000_000){if(this.profile!=='low')this.change('low');else{this.stop();this.start();}return;}child.stdin.write(packet.data);
   }
+  requestKeyframe(){if(this.paused)return;this.stop();this.start();}
   setPaused(paused:boolean){if(this.paused===paused)return;this.paused=paused;if(paused)this.stop();else this.start();}
   feedback(lagMs:number,bufferedBytes:number){if(!Number.isFinite(lagMs)||lagMs<0||lagMs>15000)return;
     const bad=lagMs>600||bufferedBytes>96000,good=lagMs<180&&bufferedBytes<16000;

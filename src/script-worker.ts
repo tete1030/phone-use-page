@@ -21,7 +21,7 @@ process.on('message',(message:any)=>{
   if(message.type==='reply'){
     const promise=pending.get(message.id);if(!promise)return;pending.delete(message.id);
     if(message.ok){const value=context.newString(JSON.stringify(message.result??null));promise.resolve(value);value.dispose();}
-    else {const error=context.newError({name:message.code||'DeviceError',message:message.error});promise.reject(error);error.dispose();}
+    else {const error=context.newError({name:message.code||'DeviceError',message:message.error});for(const key of ['code','execution','verification'])if(typeof message[key]==='string'){const value=context.newString(message[key]);context.setProp(error,key,value);value.dispose();}promise.reject(error);error.dispose();}
     promise.dispose();jobs();
   }else if(message.type==='run'){
     const source=message.check?`(async()=>{${message.code}\n})`:`${sdkBootstrap()}\n(async()=>{${message.code}\n})().then(v=>__done(JSON.stringify(v===undefined?null:v))).catch(e=>__fail(String(e)));`;

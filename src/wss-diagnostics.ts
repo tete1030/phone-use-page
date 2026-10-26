@@ -15,7 +15,8 @@ export interface WssFailure {
   packetsReceived: number;
   drawnFrames: number;
   queuedBytes: number;
-  lastPacket: {kind: number | null; bytes: number} | null;
+  lastPacket: {kind: number | null; bytes: number; keyframe?: boolean; nalTypes?: number[]} | null;
+  decoder?: {format: 'avc'; waitingForKey: boolean; recoveries: number; skippedFrames: number};
   capabilities: {secureContext: boolean; videoDecoder: boolean; createImageBitmap: boolean; bitmapRenderer: boolean | null};
 }
 export type WssFailureReport = WssFailure & {attemptId: string; assetVersion: string | null};

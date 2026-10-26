@@ -20,12 +20,13 @@ last_window = ''
 
 def current_window():
     for attempt in range(4):
-        value = connect().shell('dumpsys window displays | grep -m 1 mCurrentFocus').output
-        match = re.search(r'mCurrentFocus=Window\{([^}]+)\}', value)
-        if match:
-            return match.group(1)
+        for command in ('dumpsys window displays', 'dumpsys window windows'):
+            value = connect().shell(command + ' | grep -m 1 mCurrentFocus').output
+            match = re.search(r'mCurrentFocus\s*=\s*Window\{([^}]+)\}', value)
+            if match:
+                return match.group(1)
         time.sleep(0.08)
-    raise RuntimeError('Cannot establish active Android window identity')
+    raise AppStateError('UI_WINDOW_UNAVAILABLE', '当前窗口暂不可确认，请稍后读取界面', 503)
 
 
 def stamp(node):
@@ -68,7 +69,7 @@ def tree():
         if current_window() == window:
             break
     else:
-        raise RuntimeError('Active window changed during UI capture')
+        raise AppStateError('UI_WINDOW_CHANGED', '界面切换中，请稍后读取', 503)
     info = d.info
     width, height = info.get('displayWidth'), info.get('displayHeight')
     if not width or not height:
@@ -171,6 +172,41 @@ def same_text_region(before, after):
     overlap = max(0, min(before[2], after[2]) - max(before[0], after[0])) * max(0, min(before[3], after[3]) - max(before[1], after[1]))
     areas = [(b[2] - b[0]) * (b[3] - b[1]) for b in (before, after)]
     return min(areas) > 0 and overlap >= max(areas) / 2
+
+
+def validate_node_click(params):
+    window = current_window()
+    if window != params['windowId'] or window != last_window:
+        raise AppStateError('STALE_TARGET', '窗口已改变，未发送点击', 409)
+    source, target = params['source'], params['actionTarget']
+    by_id = {n['id']: n for n in last_nodes}
+    for node in (source, target):
+        cached = by_id.get(node['id'])
+        if not cached or cached['fingerprint'] != node['fingerprint']:
+            raise AppStateError('STALE_TARGET', '点击目标已改变，未发送', 409)
+    chain, node = set(), source
+    while node and node['id'] not in chain:
+        chain.add(node['id'])
+        if node['id'] == target['id']:
+            break
+        node = by_id.get(node['parentId'])
+    if target['id'] not in chain or source['package'] != target['package'] or not target['clickable']:
+        raise AppStateError('UNSUPPORTED_ACTION', '无法确认所在行的点击目标', 409)
+    for node in (source,) if source['id'] == target['id'] else (source, target):
+        _, info, bounds = text_object(node['selector'], node['instance'], node['bounds'])
+        if (info.get('packageName') != node['package'] or info.get('className') != node['className']
+                or not info.get('enabled', False)
+                or node['text'] and info.get('text') != node['text']
+                or node['description'] and info.get('contentDescription') != node['description']):
+            raise AppStateError('STALE_TARGET', '节点内容已改变，未发送点击', 409)
+        if node['id'] == target['id'] and not info.get('clickable', False):
+            raise AppStateError('UNSUPPORTED_ACTION', '所在行当前不可点击', 409)
+        x, y = params['point']['x'], params['point']['y']
+        if not (bounds[0] <= x < bounds[2] and bounds[1] <= y < bounds[3]):
+            raise AppStateError('STALE_TARGET', '点击落点已离开目标，未发送', 409)
+    if current_window() != window:
+        raise AppStateError('STALE_TARGET', '窗口已改变，未发送点击', 409)
+    return {'valid': True}
 
 
 def focused():
@@ -278,6 +314,8 @@ def invoke(method, params):
         return applications.switch_task(params['taskId'], params['fingerprint'])
     if method == 'snapshot':
         return tree()
+    if method == 'validateNodeClick':
+        return validate_node_click(params)
     if method == 'focus':
         return focused()
     if method == 'info':

@@ -17,3 +17,9 @@ test('a still screen is unconfirmed rather than declared offline',()=>{
   const stale=videoFreshness({...frame,now:10000});assert.equal(stale.state,'unconfirmed');
   assert.match(stale.detail,/静止/);assert.equal(stale.lastFrameAgeMs,9000);
 });
+test('late power status does not claim that freshly received video has paused',()=>{
+  const result=videoFreshness({...frame,pauseReason:'power_unknown',lastFrameAt:1999});
+  assert.equal(result.state,'uncertain');assert.match(result.title,/状态待确认/);
+  assert.doesNotMatch(result.title,/画面已暂停/);assert.match(result.ageText,/刚收到/);
+  assert.doesNotMatch(result.ageText,/0 秒/);
+});

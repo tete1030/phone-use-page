@@ -43,6 +43,14 @@ test('authenticated reports produce one structured log with codec, error, counte
     assert.equal(f.connection.lastActivity,lastActivity);
   }finally{await f.close();}
 });
+test('AVC recovery diagnostics contain structure and counters without accepting frame payloads',async()=>{
+  const f=await fixture();try{
+    const report={...payload,code:'WSS_KEYFRAME_RECOVERY',lastPacket:{kind:1,bytes:42000,keyframe:true,nalTypes:[9,7,8,6,5]},decoder:{format:'avc',waitingForKey:true,recoveries:1,skippedFrames:2}};
+    assert.equal((await f.post(report)).statusCode,200);const entry=JSON.parse(f.lines[0]!);
+    assert.deepEqual(entry.decoder,report.decoder);assert.deepEqual(entry.lastPacket.nalTypes,[9,7,8,6,5]);
+    assert.equal((await f.post({...report,lastPacket:{...report.lastPacket,data:'raw frame'}})).statusCode,400);
+  }finally{await f.close();}
+});
 test('anonymous, foreign-Origin, missing CSRF and stale-page reports never reach the log',async()=>{
   const f=await fixture();try{
     for(const [headers,status]of [[{cookie:''},401],[{origin:'https://evil.example'},403],[{'x-console-csrf':''},403],[{'x-console-connection':randomUUID()},409],[{'x-console-generation':'9'},409]] as const){

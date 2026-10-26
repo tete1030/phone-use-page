@@ -285,6 +285,71 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(error.exception.code, 'UI_ROOT_UNAVAILABLE')
         self.assertEqual(len(calls), 1)
 
+    def click_params(self):
+        nodes = bridge.tree()['nodes']
+        source, target = nodes[1], nodes[0]
+        self.click_infos = {n['resourceId'] or n['className']: {
+            'packageName': n['package'], 'className': n['className'], 'text': n['text'],
+            'contentDescription': n['description'], 'enabled': n['enabled'], 'clickable': n['clickable'],
+            'bounds': dict(zip(('left', 'top', 'right', 'bottom'), n['bounds']))
+        } for n in nodes}
+        return {'windowId': self.device.window, 'source': source, 'actionTarget': target, 'point': {'x': 100, 'y': 50}}
+
+    def click_object(self, **selector):
+        key = selector.get('resourceId') or selector.get('className')
+        return SimpleNamespace(count=1, info=self.click_infos[key])
+
+    def test_click_preflight_validates_the_label_and_ancestor_without_injecting(self):
+        params = self.click_params()
+        with patch.object(DeviceFixture, '__call__', self.click_object):
+            self.assertEqual(bridge.invoke('validateNodeClick', params), {'valid': True})
+        self.assertFalse(hasattr(self.device, 'writes'))
+
+    def test_click_preflight_rejects_changed_native_text_or_disabled_row(self):
+        for field, value in [('text', '其他条目'), ('enabled', False)]:
+            with self.subTest(field=field):
+                params = self.click_params()
+                self.click_infos[params['source']['resourceId']][field] = value
+                with patch.object(DeviceFixture, '__call__', self.click_object):
+                    with self.assertRaises(bridge.AppStateError) as error:
+                        bridge.invoke('validateNodeClick', params)
+                self.assertEqual(error.exception.code, 'STALE_TARGET')
+        params = self.click_params()
+        self.click_infos[params['actionTarget']['className']]['clickable'] = False
+        with patch.object(DeviceFixture, '__call__', self.click_object):
+            with self.assertRaises(bridge.AppStateError) as error:
+                bridge.invoke('validateNodeClick', params)
+        self.assertEqual(error.exception.code, 'UNSUPPORTED_ACTION')
+
+    def test_click_preflight_rejects_changed_window_cached_identity_and_outside_point(self):
+        for change in ['window', 'fingerprint', 'point']:
+            with self.subTest(change=change):
+                params = self.click_params()
+                if change == 'window':
+                    params['windowId'] = 'other'
+                elif change == 'fingerprint':
+                    params['source'] = dict(params['source'], fingerprint='old')
+                else:
+                    params['point']['x'] = 900
+                with patch.object(DeviceFixture, '__call__', self.click_object):
+                    with self.assertRaises(bridge.AppStateError) as error:
+                        bridge.invoke('validateNodeClick', params)
+                self.assertEqual(error.exception.code, 'STALE_TARGET')
+
+    def test_window_identity_supports_the_windows_dump_without_guessing_from_package(self):
+        calls = []
+        def shell(command):
+            calls.append(command)
+            return SimpleNamespace(output='mCurrentFocus = Window{fixture u0 package/Activity}' if ' windows' in command else '')
+        self.device.shell = shell
+        self.assertEqual(bridge.current_window(), 'fixture u0 package/Activity')
+        self.assertEqual(len(calls), 2)
+        self.device.shell = lambda command: SimpleNamespace(output='mFocusedApp=package/Activity')
+        with patch.object(bridge.time, 'sleep'):
+            with self.assertRaises(bridge.AppStateError) as error:
+                bridge.current_window()
+        self.assertEqual(error.exception.code, 'UI_WINDOW_UNAVAILABLE')
+
 
 if __name__ == '__main__':
     unittest.main()

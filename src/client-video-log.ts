@@ -13,7 +13,8 @@ const reportSchema = z.object({
   elapsedMs:counter,socketState:z.number().int().min(0).max(3),closeCode:z.number().int().min(0).max(4999).nullable(),
   width:z.number().int().min(0).max(32768),height:z.number().int().min(0).max(32768),codec:z.number().int().min(0).max(0xffffffff).nullable(),
   avcCodec:z.string().regex(/^avc1\.[a-f0-9]{6}$/).nullable(),bytesReceived:counter,packetsReceived:counter,drawnFrames:counter,queuedBytes:counter,
-  lastPacket:z.object({kind:z.number().int().min(0).max(255).nullable(),bytes:counter}).strict().nullable(),
+  lastPacket:z.object({kind:z.number().int().min(0).max(255).nullable(),bytes:counter,keyframe:z.boolean().optional(),nalTypes:z.array(z.number().int().min(0).max(31)).max(32).optional()}).strict().nullable(),
+  decoder:z.object({format:z.literal('avc'),waitingForKey:z.boolean(),recoveries:counter,skippedFrames:counter}).strict().optional(),
   capabilities:z.object({secureContext:z.boolean(),videoDecoder:z.boolean(),createImageBitmap:z.boolean(),bitmapRenderer:z.boolean().nullable()}).strict(),
 }).strict();
 
