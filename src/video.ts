@@ -27,6 +27,8 @@ export class Video extends EventEmitter {
   private config?: Buffer;
   private awaitingKey = new Set<WebSocket>();
   private touchPoints = new Map<bigint, {x:number; y:number}>();
+  /** 'scrcpy' = pressure 0 on lift-off; 'panel' = 1.0 throughout (measured on this device). */
+  pressureMode: 'scrcpy' | 'panel' = 'scrcpy';
   private pressed = new Set<number>();
   private writeTail: Promise<unknown> = Promise.resolve();
   private paused=false;
@@ -113,7 +115,7 @@ export class Video extends EventEmitter {
       const controller=this.client?.controller;if(!controller)throw new ConsoleError('NO_CONTROL','设备控制通道不可用',503);
       if(action===0&&this.touchPoints.size>=2&&!this.touchPoints.has(id))throw new ConsoleError('TOUCH_LIMIT','最多同时支持两指');
       if(action!==0&&!this.touchPoints.has(id))return;
-      await controller.injectTouch({action:action as 0,pointerId:id,pointerX:Math.round(x),pointerY:Math.round(y),videoWidth:width,videoHeight:height,pressure:action===1?0:1,actionButton:0,buttons:0});
+      await controller.injectTouch({action:action as 0,pointerId:id,pointerX:Math.round(x),pointerY:Math.round(y),videoWidth:width,videoHeight:height,pressure:action===1?(this.pressureMode==='panel'?1:0):1,actionButton:0,buttons:0});
       if(action===1)this.touchPoints.delete(id);else this.touchPoints.set(id,{x,y});
     });
   }
@@ -126,7 +128,7 @@ export class Video extends EventEmitter {
   async press(keyCode:number,metaState=0){await this.key(0,keyCode,metaState);await this.key(1,keyCode,metaState);}
   async text(text:string){if(!this.client?.controller)throw new ConsoleError('NO_CONTROL','设备文字通道不可用',503);await this.write(()=>this.client!.controller!.injectText(text));}
   private async releaseTouchesNow(){const controller=this.client?.controller;
-    try{if(controller)for(const [id,p]of this.touchPoints)await controller.injectTouch({action:1,pointerId:id,pointerX:Math.max(0,Math.min(this.width-1,Math.round(p.x))),pointerY:Math.max(0,Math.min(this.height-1,Math.round(p.y))),videoWidth:this.width,videoHeight:this.height,pressure:0,actionButton:0,buttons:0});}
+    try{if(controller)for(const [id,p]of this.touchPoints)await controller.injectTouch({action:1,pointerId:id,pointerX:Math.max(0,Math.min(this.width-1,Math.round(p.x))),pointerY:Math.max(0,Math.min(this.height-1,Math.round(p.y))),videoWidth:this.width,videoHeight:this.height,pressure:this.pressureMode==='panel'?1:0,actionButton:0,buttons:0});}
     finally{this.touchPoints.clear();}
   }
   async releaseTouches(){await this.write(()=>this.releaseTouchesNow());}

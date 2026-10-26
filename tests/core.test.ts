@@ -17,14 +17,50 @@ import {nodeTouchPoint,resolveClickOptions} from '../src/click-options.js';
 import {ConsoleError,type AndroidNode,type Navigation,type ApplicationState} from '../src/types.js';
 
 const node=(patch:Partial<AndroidNode>={}):AndroidNode=>({id:'node',parentId:null,depth:0,index:0,text:'按钮',description:'',resourceId:'pkg:id/button',className:'android.widget.Button',package:'pkg',bounds:[0,0,100,100],enabled:true,clickable:true,longClickable:false,checkable:false,checked:false,focused:false,editable:false,password:false,scrollable:false,visible:true,fingerprint:'original',selector:{},instance:0,...patch});
-test('click jitter defaults on, respects false and rejects obsolete mode options',()=>{assert.deepEqual(resolveClickOptions(undefined),{jitter:true});assert.deepEqual(resolveClickOptions({},{jitter:false}),{jitter:false});assert.deepEqual(resolveClickOptions({jitter:false}),{jitter:false});for(const value of [null,[],{mode:'touch'},{jitter:'yes'},{pressure:1}])assert.throws(()=>resolveClickOptions(value),/点击选项/);});
+test('click jitter defaults on, respects false and rejects obsolete mode options',()=>{assert.deepEqual(resolveClickOptions(undefined),{jitter:true,realism:'auto'});assert.deepEqual(resolveClickOptions({},{jitter:false,realism:'auto'}),{jitter:false,realism:'auto'});assert.deepEqual(resolveClickOptions({jitter:false}),{jitter:false,realism:'auto'});for(const value of [null,[],{mode:'touch'},{jitter:'yes'},{pressure:1},{realism:'sometimes'}])assert.throws(()=>resolveClickOptions(value),/点击选项/);});
+test('realism is independent of jitter and reaches the receipt',()=>{assert.deepEqual(resolveClickOptions({realism:'off'}),{jitter:true,realism:'off'});assert.deepEqual(resolveClickOptions({jitter:false,realism:'client'}),{jitter:false,realism:'client'});});
 test('node touch jitter stays inside clipped bounds and preserves small targets',()=>{for(const bounds of [[-100,-100,30,30],[95,95,200,200],[0,0,1,1],[10,10,19,19]] as AndroidNode['bounds'][]){const n=node({bounds});for(const rng of [()=>0,()=>.5,()=>.999999]){const p=nodeTouchPoint(n,100,100,true,rng);assert.ok(p.x>=Math.max(0,bounds[0])&&p.x<Math.min(100,bounds[2]));assert.ok(p.y>=Math.max(0,bounds[1])&&p.y<Math.min(100,bounds[3]));}if(bounds[2]-bounds[0]<10)assert.deepEqual(nodeTouchPoint(n,100,100,true,()=>0),nodeTouchPoint(n,100,100,false));}assert.throws(()=>nodeTouchPoint(node({bounds:[100,0,200,100]}),100,100,true),/触摸区域/);});
 function clickFixture(patch:Partial<AndroidNode>={}) {const d=new Device('fixture','unused','unused'),touches:{action:number;x:number;y:number}[]=[];Object.assign(d.state,{nodes:[node(patch)],width:100,height:100,screenOn:true,locked:false,powerCollectedAt:Date.now(),controlAvailable:true,uiError:null});d.video.width=80;d.video.height=80;d.video.touch=async(action,id,x,y)=>{touches.push({action,x,y});};d.collect=async()=>d.state;return {d,touches,target:{id:'node',fingerprint:'original'}};}
+test('realism off keeps the legacy 20-step linear swipe byte for byte',async()=>{
+  const f=clickFixture();const r=await f.d.gesture('owner','swipe',{x1:0,y1:0,x2:99,y2:99,durationMs:400,realism:'off'});
+  assert.equal(r.backend,'gesture:off:legacy');
+  assert.equal(f.touches.length,22);
+  assert.deepEqual(f.touches[0],{action:0,x:0,y:0});
+  // 20 equal steps: every move advances the same distance, and the last one
+  // lands exactly on the destination. That is the shape being preserved.
+  const moves=f.touches.slice(1,-1);
+  const steps=[...new Set(moves.map((m,i)=>(m.x-(i?moves[i-1]!.x:0)).toFixed(4)))];
+  assert.equal(steps.length,1,`uneven steps ${steps}`);
+  assert.ok(Math.abs(f.touches.at(-1)!.x-79.2)<0.001);
+});
+test('realism client replays a 4 ms grid with a bell-shaped speed profile',async()=>{
+  const f=clickFixture();const r=await f.d.gesture('owner','swipe',{x1:0,y1:0,x2:99,y2:99,durationMs:400,realism:'client',seed:5});
+  assert.match(r.backend,/^gesture:client:/);
+  const moves=f.touches.filter(t=>t.action===2);
+  assert.ok(moves.length>=90,`only ${moves.length} move samples`);
+  const steps=moves.slice(1).map((m,i)=>Math.hypot(m.x-moves[i]!.x,m.y-moves[i]!.y));
+  const peak=Math.max(...steps);
+  const at=steps.indexOf(peak)/steps.length;
+  assert.ok(at>0.35&&at<0.65,`peak at ${(at*100).toFixed(0)}%`);
+  assert.ok(steps[0]!<peak/5,'start is not slow');
+  assert.ok(steps[steps.length-1]!<peak/5,'end is not slow');
+});
+test('a cancelled swipe lifts at the last emitted point, not the destination',async()=>{
+  const f=clickFixture();const ctrl=new AbortController();
+  let n=0;const video=f.d.video;
+  video.touch=async(action,id,x,y)=>{f.touches.push({action,x,y});if(action===2&&++n===5)ctrl.abort();};
+  await assert.rejects(f.d.gesture('owner','swipe',{x1:0,y1:0,x2:99,y2:99,durationMs:400,realism:'client',seed:1},undefined,ctrl.signal),/任务已停止/);
+  const up=f.touches.at(-1)!;
+  const lastMove=f.touches.filter(t=>t.action===2).at(-1)!;
+  assert.equal(up.action,1);
+  assert.deepEqual([up.x,up.y],[lastMove.x,lastMove.y]);
+  assert.notDeepEqual([up.x,up.y],[79.2,79.2]);
+});
 test('node click samples one point and scales it once for both DOWN and UP',async t=>{t.mock.method(Math,'random',()=>0);const f=clickFixture();const result=await f.d.nodeAction('owner',f.target,'click');assert.deepEqual(result.point,{x:45,y:45});assert.equal(result.jitter,true);assert.equal(result.verification,'not_verified');assert.deepEqual(f.touches,[{action:0,x:36,y:36},{action:1,x:36,y:36}]);f.touches.length=0;const fixed=await f.d.nodeAction('owner',f.target,'click',undefined,undefined,{jitter:false});assert.deepEqual(fixed.point,{x:50,y:50});assert.deepEqual(f.touches,[{action:0,x:40,y:40},{action:1,x:40,y:40}]);});
 test('long press keeps one jittered point for DOWN and UP',async t=>{t.mock.method(Math,'random',()=>.999999);const f=clickFixture({longClickable:true});f.d.video.touch=async(action,id,x,y)=>{f.touches.push({action,x,y});};const result=await f.d.nodeAction('owner',f.target,'longPress',400);assert.deepEqual(result.point,{x:55,y:55});assert.deepEqual(f.touches,[{action:0,x:44,y:44},{action:1,x:44,y:44}]);});
 test('a satisfied toggle sends no touch and changed toggles still require readback',async()=>{const f=clickFixture({checkable:true,checked:true});const noop=await f.d.nodeAction('owner',f.target,'setChecked',true);assert.equal(noop.point,undefined);assert.equal(f.touches.length,0);await assert.rejects(f.d.nodeAction('owner',f.target,'setChecked',false),/开关状态未达到/);assert.equal(f.touches.length,2);});
 test('stale targets are rejected with jitter enabled and coordinate taps remain exact',async()=>{const f=clickFixture();await assert.rejects(f.d.nodeAction('owner',{...f.target,fingerprint:'stale'},'click'),/所选节点已变化/);assert.equal(f.touches.length,0);await f.d.gesture('owner','tap',{x:25,y:75});assert.deepEqual(f.touches,[{action:0,x:20,y:60},{action:1,x:20,y:60}]);});
-test('JS node options override a captured task default without changing that default',async()=>{const d=new Device('fixture','unused','unused');d.state.nodes=[node()];d.collect=async()=>d.state;d.nodeAction=async(...args)=>args[5] as any;const tasks=new Tasks(d),defaults={jitter:false},invoke=(clickOptions?:unknown)=>(tasks as any).rpc('node',{selector:{text:'按钮'},action:'click',clickOptions},'owner','task',new AbortController().signal,defaults);assert.deepEqual(await invoke(),{jitter:false});assert.deepEqual(await invoke({jitter:true}),{jitter:true});assert.deepEqual(await invoke({jitter:false}),{jitter:false});assert.deepEqual(defaults,{jitter:false});await assert.rejects(invoke({mode:'element'}),/点击选项/);});
+test('JS node options override a captured task default without changing that default',async()=>{const d=new Device('fixture','unused','unused');d.state.nodes=[node()];d.collect=async()=>d.state;d.nodeAction=async(...args)=>args[5] as any;const tasks=new Tasks(d),defaults={jitter:false,realism:'auto'},invoke=(clickOptions?:unknown)=>(tasks as any).rpc('node',{selector:{text:'按钮'},action:'click',clickOptions},'owner','task',new AbortController().signal,defaults);assert.deepEqual(await invoke(),{jitter:false,realism:'auto'});assert.deepEqual(await invoke({jitter:true}),{jitter:true,realism:'auto'});assert.deepEqual(await invoke({jitter:false,realism:'off'}),{jitter:false,realism:'off'});assert.deepEqual(defaults,{jitter:false,realism:'auto'});await assert.rejects(invoke({mode:'element'}),/点击选项/);});
 test('compact view retains independently actionable child toggles',()=>{const nodes=[node(),node({id:'toggle',parentId:'node',depth:1,text:'按钮',checkable:true})];assert.equal(shownNodes(nodes,'compact','').length,2);});
 test('search retains ancestor context instead of reparenting to unrelated nodes',()=>{const nodes=[node({id:'root',clickable:false}),node({id:'parent',parentId:'root',depth:1}),node({id:'child',parentId:'parent',depth:2,text:'查找对象'})];assert.deepEqual(shownNodes(nodes,'full','查找对象').map(n=>n.id),['root','parent','child']);});
 test('phone text cannot inject HTML into server-rendered observation',()=>assert.equal(escape('<script>"&</script>'),'&lt;script&gt;&quot;&amp;&lt;/script&gt;'));

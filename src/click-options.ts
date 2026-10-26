@@ -1,14 +1,19 @@
 import {ConsoleError, type AndroidNode} from './types.js';
+import type {Realism} from './gesture-plan.js';
 
-export interface ClickOptions {jitter?:boolean}
-export interface ResolvedClickOptions {jitter:boolean}
+export interface ClickOptions {jitter?:boolean;realism?:Realism}
+export interface ResolvedClickOptions {jitter:boolean;realism:Realism}
+const REALISM:Realism[]=['auto','off','framework','client'];
 
-export function resolveClickOptions(value:unknown,defaults:ResolvedClickOptions={jitter:true}):ResolvedClickOptions {
+export function resolveClickOptions(value:unknown,defaults:ResolvedClickOptions={jitter:true,realism:'auto'}):ResolvedClickOptions {
   if(value===undefined)return {...defaults};
   if(!value||typeof value!=='object'||Array.isArray(value))throw new ConsoleError('INVALID_CLICK_OPTIONS','点击选项必须是对象');
   const p=value as Record<string,unknown>;
-  if(Object.keys(p).some(k=>k!=='jitter')||p.jitter!==undefined&&typeof p.jitter!=='boolean')throw new ConsoleError('INVALID_CLICK_OPTIONS','点击选项仅支持 jitter: boolean');
-  return {jitter:p.jitter as boolean??defaults.jitter};
+  if(Object.keys(p).some(k=>k!=='jitter'&&k!=='realism')
+    ||p.jitter!==undefined&&typeof p.jitter!=='boolean'
+    ||p.realism!==undefined&&!REALISM.includes(p.realism as Realism))
+    throw new ConsoleError('INVALID_CLICK_OPTIONS','点击选项仅支持 jitter: boolean 与 realism: auto|off|framework|client');
+  return {jitter:p.jitter as boolean??defaults.jitter,realism:(p.realism as Realism|undefined)??defaults.realism};
 }
 
 export function nodeTouchPoint(n:AndroidNode,width:number,height:number,jitter:boolean,random= Math.random) {

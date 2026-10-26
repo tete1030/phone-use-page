@@ -74,7 +74,8 @@ test('fresh reads made during the second capture schedule a third capture',async
 });
 test('post-tap observation cannot reuse the capture started before the tap',async()=>{
   const f=captures(),first=f.d.collect();f.d.video.touch=async action=>{if(action===1)f.setText('after');};
-  const action=f.d.gesture('owner','tap',{x:50,y:50});await new Promise(resolve=>setTimeout(resolve,70));assert.equal(f.pending.length,1);
+  const action=f.d.gesture('owner','tap',{x:50,y:50});// The tap holds 65-119 ms now, so wait past the longest possible press.
+  await new Promise(resolve=>setTimeout(resolve,250));assert.equal(f.pending.length,1);
   f.complete();await first;await tick();f.complete();const result=await action;assert.equal(f.d.state.nodes[0]!.text,'after');assert.equal(result.verification,'not_verified');assert.equal(f.d.state.captureSeq,2);
 });
 test('UI root failure leaves a known connection online and rejects the old window',async()=>{
