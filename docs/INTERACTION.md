@@ -156,7 +156,7 @@ WSS 失败与限次恢复上报直接打印到后端日志，不写数据库。�
 |---|---|
 | `auto`（默认） | 设备支持 `input pswipe` 时用端上合成，否则用客户端采样流 |
 | `framework` | 端上合成：`input pswipe` 在 system_server 内生成整条时间线，全程一个 `downTime`、约 4 ms 采样批次。不支持时报 `UNREALISTIC_INPUT`，**不静默降级** |
-| `client` | 客户端生成采样序列后经 scrcpy 注入。任何设备可用，但 scrcpy 每个消息就是一个 `MotionEvent`，`getHistorySize()` 恒为 0 |
+| `client` | 客户端按 4 ms 网格生成采样后经 scrcpy 注入。任何设备可用。scrcpy 每个消息只发一个采样点，历史批次由系统输入通道按投递节奏合并产生——实测在这台设备上以 4 ms 注入时 `getHistorySize()` 多为 4 |
 | `off` | 保持改造前的行为：20 段线性插值、固定按压时长 |
 
 双指手势始终走客户端：端上合成目前只支持单指。取消手势时在**最后已发出的点**抬起，不会跳到终点。
