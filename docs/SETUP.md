@@ -49,7 +49,7 @@ WSS 使用与页面**同源**的连接传输 H.264 视频，包含帧间压缩�
 3. 运行 `adb devices -l`。目标设备应显示 `device`，而不是 `unauthorized`、`offline` 或 `no permissions`。
 4. 如果点击/按键注入被阻止，检查调试安全设置和企业管理策略；部分厂商有额外开关。本项目不要求 SIM 卡、小米账号、解锁 Bootloader 或 root。
 
-Android 5+ 是 scrcpy 的基础要求，具体功能还取决于 UI Automator、应用和厂商策略。UHID 键盘会尝试注册并验证，不支持时回退到 keycode。受保护或自绘应用可能限制视频/UI 树读取。唤醒并解锁不会绕过 PIN/密码。完整边界见 [PORTABILITY.md](PORTABILITY.md)。
+Android 5+ 是 scrcpy 的基础要求，具体功能还取决于 UI Automator、应用和厂商策略。键盘默认用 keycode 注入，不注册任何输入设备；设置 `CONSOLE_KEYBOARD=uhid` 才会尝试注册 UHID 键盘（应用会在输入设备表里看到它）。受保护或自绘应用可能限制视频/UI 树读取。唤醒并解锁不会绕过 PIN/密码。完整边界见 [PORTABILITY.md](PORTABILITY.md)。
 
 `ANDROID_SERIAL` 接受 ADB 显示的设备标识，包括已授权无线设备，例如 `device.example.test:5555`。无线调试需**先**按安卓官方流程完成配对/连接，再启动应用；ADB 应留在私有网络中。本应用使用本地 TCP 5037 ADB 服务，目前不对外承诺远程 ADB 服务配置。
 

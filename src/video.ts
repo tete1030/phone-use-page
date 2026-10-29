@@ -51,7 +51,18 @@ export class Video extends EventEmitter {
     const options = new AdbScrcpyOptions3_3_3({video:true,audio:false,control:true,videoCodec:'h264',videoCodecOptions:'profile=1,level=4096,i-frame-interval=2,max-bframes=0',...videoEncodingConfig(process.env),tunnelForward:true,powerOn:process.env.KEEP_SCREEN_ON==='1',stayAwake:process.env.KEEP_SCREEN_ON==='1',clipboardAutosync:false,logLevel:'warn'});
     const client = await AdbScrcpyClient.start(adb, '/data/local/tmp/android-console-scrcpy.jar', options);
     this.client = client;
+    // `CONSOLE_KEYBOARD=uhid` opts back into scrcpy's UHID keyboard. The default
+    // is keycode injection: UHID adds a USB keyboard called "Android Console
+    // Keyboard" to the phone's input device table, which apps enumerate (Feishu's
+    // ExternalKeyboardUtils, JD's device table). Keycode injection works on every
+    // device and leaves no extra device behind.
+    const keyboardMode =
+        (process.env.CONSOLE_KEYBOARD || 'keycode').toLowerCase() === 'uhid' ? 'uhid' : 'keycode';
+    if (keyboardMode === 'keycode') {
+      this.keyboardBackend = 'keycode';
+    } else {
     try{const hardware=new HardwareKeyboard(client.controller!);await hardware.create();this.hardware=hardware;this.keyboardBackend='uhid_pending';}catch{this.keyboardBackend='keycode';}
+    }
 
     void (async () => {
       const reader = client.output.getReader();
@@ -125,7 +136,18 @@ export class Video extends EventEmitter {
   }
   async confirmKeyboard(present:boolean){if(this.keyboardBackend==='uhid_pending'){this.keyboardBackend=present?'uhid':'keycode';if(!present){await this.hardware?.close().catch(()=>{});this.hardware=undefined;}}}
   async panel(kind:'notifications'|'settings'){const controller=this.client?.controller;if(!controller)throw new ConsoleError('NO_CONTROL','控制通道不可用',503);await this.write(()=>kind==='notifications'?controller.expandNotificationPanel():controller.expandSettingPanel());}
-  async press(keyCode:number,metaState=0){await this.key(0,keyCode,metaState);await this.key(1,keyCode,metaState);}
+  /**
+   * A press with a human hold. A key physically held by a finger stays down for
+   * roughly 60-150 ms; down and up in the same transaction is something no
+   * keyboard produces. The hold is measured from this side of the connection,
+   * so a delayed up cannot reorder against the next key.
+   */
+  async press(keyCode:number,metaState=0,holdMs?:number){
+    const hold=holdMs??(55+Math.floor(Math.random()*95));
+    await this.key(0,keyCode,metaState);
+    try{await new Promise(resolve=>setTimeout(resolve,hold));}
+    finally{await this.key(1,keyCode,metaState);}
+  }
   async text(text:string){if(!this.client?.controller)throw new ConsoleError('NO_CONTROL','设备文字通道不可用',503);await this.write(()=>this.client!.controller!.injectText(text));}
   private async releaseTouchesNow(){const controller=this.client?.controller;
     try{if(controller)for(const [id,p]of this.touchPoints)await controller.injectTouch({action:1,pointerId:id,pointerX:Math.max(0,Math.min(this.width-1,Math.round(p.x))),pointerY:Math.max(0,Math.min(this.height-1,Math.round(p.y))),videoWidth:this.width,videoHeight:this.height,pressure:this.pressureMode==='panel'?1:0,actionButton:0,buttons:0});}

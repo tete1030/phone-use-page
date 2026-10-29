@@ -51,6 +51,8 @@ services:
       VIDEO_MAX_SIZE: ${VIDEO_MAX_SIZE:-1920}
       VIDEO_MAX_FPS: ${VIDEO_MAX_FPS:-30}
       VIDEO_BIT_RATE: ${VIDEO_BIT_RATE:-4000000}
+      # keycode (default) leaves no input device behind; uhid registers a USB keyboard.
+      CONSOLE_KEYBOARD: ${CONSOLE_KEYBOARD:-keycode}
     volumes:
       - type: bind
         source: ${CONSOLE_PASSWORD_PATH:-./.local/console-password}
