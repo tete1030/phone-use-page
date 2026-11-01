@@ -14,6 +14,9 @@ from app_state import AppState, AppStateError
 device = None
 serial = sys.argv[1]
 power_cache = {'at': 0, 'awake': False, 'locked': None}
+# d.info is a full round trip (~70 ms) that only changes with the display
+# rotation, so it is reused until the dumped hierarchy reports a new rotation.
+info_cache = {'at': 0.0, 'value': None, 'rotation': None}
 last_nodes = []
 last_window = ''
 
@@ -54,6 +57,16 @@ def read_power():
     return {'screenOn': power_cache['awake'], 'locked': power_cache['locked']}
 
 
+def display_info(root):
+    rotation = int(root.attrib.get('rotation', 0) or 0)
+    cached = info_cache['value']
+    if cached and info_cache['rotation'] == rotation and time.monotonic() - info_cache['at'] < 60:
+        return cached
+    value = connect().info
+    info_cache.update(at=time.monotonic(), value=value, rotation=rotation)
+    return value
+
+
 def tree():
     global last_nodes, last_window
     d = connect()
@@ -66,17 +79,24 @@ def tree():
         root = ET.fromstring(content)
         if len(root) == 0:
             raise AppStateError('UI_ROOT_UNAVAILABLE', '当前应用没有可读 UI 根节点；视频和应用导航仍可用', 503)
+        # A second `dumpsys window` costs ~58 ms; the dump naming the same
+        # package as the focus window already proves the two agree.
+        package = root.attrib.get('package', '')
+        if package and package in window:
+            break
         if current_window() == window:
             break
     else:
         raise AppStateError('UI_WINDOW_CHANGED', '界面切换中，请稍后读取', 503)
-    info = d.info
+    info = display_info(root)
     width, height = info.get('displayWidth'), info.get('displayHeight')
     if not width or not height:
         width, height = d.window_size()
     if not isinstance(width, int) or not isinstance(height, int) or width <= 0 or height <= 0:
         raise RuntimeError('Cannot establish Android display size')
-    if time.monotonic() - power_cache['at'] > 5:
+    # The node side polls power every 2 s while a session is attached; this
+    # inner refresh only covers snapshots taken without that poll.
+    if time.monotonic() - power_cache['at'] > 15:
         read_power()
     nodes = []
     instances = {}

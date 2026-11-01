@@ -64,9 +64,14 @@ export class Device extends EventEmitter {
   }
   private notify(){this.state.observationRevision=(this.state.observationRevision||0)+1;this.emit('observation',structuredClone(this.state));}
   publish(){this.notify();}
-  refreshPower():Promise<void>{if(this.readingPower)return this.readingPower;this.readingPower=this.bridge.call<{screenOn:boolean;locked:boolean|null}>('power').then(power=>{Object.assign(this.state,power,{powerCollectedAt:Date.now(),powerError:null});this.emit('power',{...power,powerCollectedAt:this.state.powerCollectedAt});}).catch(error=>{this.state.powerError='手机状态读取失败';this.notify();throw error;}).finally(()=>{this.readingPower=undefined;});return this.readingPower;}
+  /** Read screen state; `maxAgeMs` lets a caller accept a recent reading instead of round-tripping to the phone. */
+  refreshPower(maxAgeMs=0):Promise<void>{
+    if(maxAgeMs>0&&!this.state.powerError&&this.state.powerCollectedAt&&Date.now()-this.state.powerCollectedAt<=maxAgeMs)return Promise.resolve();
+    if(this.readingPower)return this.readingPower;this.readingPower=this.bridge.call<{screenOn:boolean;locked:boolean|null}>('power').then(power=>{Object.assign(this.state,power,{powerCollectedAt:Date.now(),powerError:null});this.emit('power',{...power,powerCollectedAt:this.state.powerCollectedAt});}).catch(error=>{this.state.powerError='手机状态读取失败';this.notify();throw error;}).finally(()=>{this.readingPower=undefined;});return this.readingPower;}
   assertScreen(){if(!this.state.screenOn)throw new ConsoleError('SCREEN_OFF','屏幕已关闭，请点击手机画面亮屏',409);if(this.state.locked!==false)throw new ConsoleError('DEVICE_LOCKED',this.state.locked?'手机已锁屏，请在手机上解锁':'手机解锁状态未知，请稍后重试',409);}
-  async ensureInteractive(){if(!this.state.powerCollectedAt||Date.now()-this.state.powerCollectedAt>1500)await this.refreshPower();this.assertScreen();}
+  // The background power timer refreshes every 2 s, so a reading up to 3 s old
+  // is still trustworthy and an action does not pay for a redundant round trip.
+  async ensureInteractive(){if(!this.state.powerCollectedAt||Date.now()-this.state.powerCollectedAt>3000)await this.refreshPower();this.assertScreen();}
   async wake(session:string,task?:string){return this.enqueue(session,async()=>{await this.video.start();this.claim(session,task);await this.video.press(keyCodes.WAKEUP!);await this.bridge.call('unlock',{},15000,()=>this.claim(session,task));for(let i=0;i<8;i++){await pause(150);this.claim(session,task);await this.refreshPower();if(this.state.screenOn&&this.state.locked===false)break;}return {status:this.state.screenOn&&this.state.locked===false?'ok':'unlock_required',execution:'sent',verification:this.state.screenOn&&this.state.locked===false?'verified':'failed',screenOn:this.state.screenOn,locked:this.state.locked};},task);}
   async press(session:string,code:number,meta=0,task?:string){if(code===keyCodes.WAKEUP)return this.wake(session,task);return this.enqueue(session,async()=>{const startedAt=Date.now(),beforeSnapshot=this.state.snapshotId,beforeForeground=this.state.foregroundApp;await this.ensureInteractive();this.claim(session,task);if(code===keyCodes.PASTE){await this.collect();if(!this.state.focus)throw new ConsoleError('NO_EDITABLE_FOCUS','粘贴前需确认手机文本焦点',409);}await this.video.press(code,meta);await this.afterApplicationAction();return {status:'ok',execution:'sent',verification:'not_verified',snapshotId:this.state.snapshotId,changed:this.state.snapshotId!==beforeSnapshot||this.state.foregroundApp!==beforeForeground,elapsedMs:Date.now()-startedAt,foregroundApp:this.state.foregroundApp};},task);}
   async start() {
@@ -74,7 +79,7 @@ export class Device extends EventEmitter {
 
     const summary=async()=>{if(this.stopped)return;if(!this.sessionActive||this.touching){this.summaryTimer=setTimeout(summary,15000);return;}try{this.state.summary=await this.bridge.call('summary');this.notify();}catch{}this.summaryTimer=setTimeout(summary,15000);};void summary();
     this.notify();
-    const poll=async()=>{if(this.stopped)return;if(this.sessionActive&&!this.touching)try{await this.collect();if(!this.video.client){await this.video.start();await this.video.confirmKeyboard(await this.bridge.call<boolean>('keyboardPresent').catch(()=>false));this.state.keyboardBackend=this.video.keyboardBackend;}}catch{}this.fullTimer=setTimeout(poll,1500);};
+    const poll=async()=>{if(this.stopped)return;if(this.sessionActive&&!this.touching&&!this.pendingActions)try{await this.collect();if(!this.video.client){await this.video.start();await this.video.confirmKeyboard(await this.bridge.call<boolean>('keyboardPresent').catch(()=>false));this.state.keyboardBackend=this.video.keyboardBackend;}}catch{}this.fullTimer=setTimeout(poll,1500);};
     this.fullTimer=setTimeout(poll,1500);
     const power=async()=>{if(this.stopped)return;if(this.sessionActive)try{await this.refreshPower();}catch{}if(!this.stopped)this.powerTimer=setTimeout(power,2000);};this.powerTimer=setTimeout(power,1000);
     this.leaseTimer=setInterval(()=>{if(this.owner&&Date.now()>this.leaseUntil&&!this.activeTask&&!this.touching){this.owner=undefined;void this.video.release();this.notify();}},2000);
@@ -95,7 +100,7 @@ export class Device extends EventEmitter {
       const previousFocus=this.state.focus?.id;
       const hash=createHash('sha256').update(JSON.stringify(result.nodes)).digest('hex');
       if(hash!==this.hash){this.hash=hash;this.state.snapshotId='ui-'+(++this.generation);}
-      const recentPower=await this.refreshPower().then(()=>({screenOn:this.state.screenOn,locked:this.state.locked})).catch(()=>({screenOn:result.screenOn,locked:result.locked}));
+      const recentPower=await this.refreshPower(1200).then(()=>({screenOn:this.state.screenOn,locked:this.state.locked})).catch(()=>({screenOn:result.screenOn,locked:result.locked}));
       Object.assign(this.state,{connected:true,nodes:result.nodes,width:result.width,height:result.height,rotation:result.rotation,...recentPower,windowId:result.windowId,uiElapsedMs:result.elapsedMs,collectedAt,captureStartedAt,captureSeq:(this.state.captureSeq||0)+1,uiError:null});
       this.state.foregroundApp=result.nodes.find(n=>n.package&&!n.package.startsWith('com.android.systemui'))?.package||result.nodes[0]?.package||'';
       const fields=result.nodes.filter(n=>n.focused&&n.editable&&!n.password);this.state.focus=fields.length===1?fields[0]!:null;this.state.focusReason=fields.length>1?'AMBIGUOUS_FOCUS':fields.length===1?null:'NO_EDITABLE_FOCUS';
