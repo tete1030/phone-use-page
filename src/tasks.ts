@@ -6,7 +6,7 @@ import { resolve } from 'node:path';
 import { Device, keyCodes } from './device.js';
 import { ConsoleError, type Selector } from './types.js';
 import {resolveClickOptions,type ClickOptions,type ResolvedClickOptions} from './click-options.js';
-import {observationView,projectObservation,renderObservationText} from './observation-view.js';
+import {observationView,projectObservation,renderObservationText,applyObservationDelta,fullObservationDelta} from './observation-view.js';
 
 export interface Task {id:string;status:string;startedAt:number;finishedAt?:number;logs:string[];steps:number;result?:unknown;error?:string;owner:string;code:string;clickOptions?:ResolvedClickOptions}
 const wait=(ms:number,signal:AbortSignal)=>new Promise<void>((resolve,reject)=>{if(signal.aborted){reject(new ConsoleError('CANCELLED','任务已停止'));return;}const timer=setTimeout(()=>{signal.removeEventListener('abort',abort);resolve();},ms);const abort=()=>{clearTimeout(timer);reject(new ConsoleError('CANCELLED','任务已停止'));};signal.addEventListener('abort',abort,{once:true});});
@@ -55,8 +55,19 @@ export class Tasks extends EventEmitter {
     if(signal.aborted)throw new ConsoleError('CANCELLED','任务已停止');this.onActivity(owner);
     if(method==='panel'){if(!['notifications','settings'].includes(p.kind))throw new ConsoleError('INVALID_PANEL','无效面板');return this.device.panel(owner,p.kind,taskId);}
     if(method==='clipboard'){if(p.write&&(typeof p.text!=='string'||p.text.length>32768))throw new ConsoleError('TEXT_LIMIT','剪贴板文字无效');return this.device.enqueue(owner,async()=>{await this.device.ensureInteractive();return this.device.bridge.call('clipboard',p);},taskId);}
-    if(method==='observe'){const o=await this.device.collect({fresh:true,reuseMs:300}),view=observationView(p?.view,'full');return view==='full'?o:projectObservation(o,view);}
-    if(method==='observeText'){const view=observationView(p?.view);return renderObservationText(projectObservation(await this.device.collect({fresh:true,reuseMs:300}),view==='full'?'actionable':view));}
+    if(method==='observe'){
+      const o=await this.device.collect({fresh:true,reuseMs:300}),view=observationView(p?.view,'full'),since=typeof p?.since==='string'&&p.since?p.since:undefined;
+      if(!since)return view==='full'?o:projectObservation(o,view);
+      const base=this.device.snapshot(since);
+      if(view==='full')return {...o,delta:fullObservationDelta(o,base,since)};
+      return applyObservationDelta(projectObservation(o,view),base?projectObservation(base,view):undefined,since);
+    }
+    if(method==='observeText'){
+      const view=observationView(p?.view),since=typeof p?.since==='string'&&p.since?p.since:undefined;
+      const narrow=view==='full'?'actionable':view,o=await this.device.collect({fresh:true,reuseMs:300}),base=since?this.device.snapshot(since):undefined;
+      const projected=projectObservation(o,narrow);
+      return renderObservationText(since?applyObservationDelta(projected,base?projectObservation(base,narrow):undefined,since):projected);
+    }
     if(method==='uiTree')return (await this.device.collect({fresh:true,reuseMs:300})).nodes;
     if(method==='screenshot')return this.device.bridge.call('screenshot');
     if(method==='sleep'){if(!Number.isFinite(p.ms)||p.ms<0||p.ms>30000)throw new ConsoleError('INVALID_WAIT','等待时间必须在 0–30000 ms');await wait(p.ms,signal);return null;}

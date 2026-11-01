@@ -15,7 +15,7 @@ import {PageConnections} from '../src/page-connections.js';
 import {shownNodes,escape} from '../src/presentation.js';
 import {nodeTouchPoint,resolveClickOptions} from '../src/click-options.js';
 import {ConsoleError,type AndroidNode,type Navigation,type ApplicationState} from '../src/types.js';
-import {projectObservation,renderObservationText,observationView} from '../src/observation-view.js';
+import {projectObservation,renderObservationText,observationView,applyObservationDelta,fullObservationDelta} from '../src/observation-view.js';
 import {renderTaskPage} from '../src/task-page.js';
 
 const node=(patch:Partial<AndroidNode>={}):AndroidNode=>({id:'node',parentId:null,depth:0,index:0,text:'按钮',description:'',resourceId:'pkg:id/button',className:'android.widget.Button',package:'pkg',bounds:[0,0,100,100],enabled:true,clickable:true,longClickable:false,checkable:false,checked:false,focused:false,editable:false,password:false,scrollable:false,visible:true,fingerprint:'original',selector:{},instance:0,...patch});
@@ -359,4 +359,37 @@ test('agent observation views keep only act-ready rows and explain inherited cli
   assert.ok(compactText.includes('ncard-s · 指纹 · 点击→ncard · [10,220→390,300]'));
   assert.ok(compactText.includes('ntip · 提示文字 · 不可点击'));
   assert.ok(renderObservationText({...actionable,collectedAt:0},40000).includes('已过期，请刷新'));
+});
+const observation=(snapshotId:string,nodes:AndroidNode[])=>({connected:true,serial:'s',model:'m',android:'a',system:'x',width:1000,height:1000,rotation:0,screenOn:true,locked:false,snapshotId,captureSeq:1,collectedAt:1000,nodes,foregroundApp:'pkg',focus:null,focusEpoch:0,uiError:null,videoError:null,controlAvailable:true} as any);
+test('observing with since returns only the rows that changed and names what disappeared',()=>{
+  const before=observation('ui-1',[node({id:'aaa111',text:'设置'}),node({id:'bbb222',text:'WLAN'}),node({id:'ccc333',text:'蓝牙'})]);
+  const after=observation('ui-2',[node({id:'aaa111',text:'设置'}),node({id:'bbb222',text:'WLAN 已关闭',fingerprint:'changed'}),node({id:'ddd444',text:'热点'})]);
+  const delta=applyObservationDelta(projectObservation(after,'actionable'),projectObservation(before,'actionable'),'ui-1');
+  assert.deepEqual(delta.rows.map(r=>[r.id,r.change]),[['nbbb222','changed'],['nddd444','added']]);
+  assert.deepEqual(delta.delta,{since:'ui-1',available:true,added:1,changed:1,removed:[{id:'nccc333',label:'蓝牙'}],unchanged:1});
+  const text=renderObservationText(delta);
+  assert.ok(text.includes('变化 · 相对 ui-1：新增 1 · 变化 1 · 消失 1 · 未变 1 行'),text);
+  assert.ok(text.includes('nbbb222 · WLAN 已关闭 · 变化 · 可点击'),text);
+  assert.ok(text.includes('消失 nccc333 蓝牙'),text);
+  assert.ok(!text.includes('naaa111'),'unchanged rows are left out of the delta view');
+  const full=fullObservationDelta(after,before,'ui-1');
+  assert.deepEqual(full,{since:'ui-1',available:true,added:1,changed:1,removed:[{id:'nccc333',label:'蓝牙'}],unchanged:1});
+});
+test('a delta view falls back to the full view when the base snapshot is gone',()=>{
+  const after=observation('ui-9',[node({id:'aaa111',text:'设置'}),node({id:'bbb222',text:'WLAN'})]);
+  const view=applyObservationDelta(projectObservation(after,'actionable'),undefined,'ui-7');
+  assert.equal(view.delta?.available,false);assert.deepEqual(view.rows.map(r=>r.id),['naaa111','nbbb222']);
+  assert.ok(renderObservationText(view).includes('基准快照 ui-7 已不可用，返回完整视图'));
+  assert.equal(fullObservationDelta(after,undefined,'ui-7').available,false);
+});
+test('a row id selects its node and a fingerprint pins the content across observations',()=>{
+  const d=new Device('test','unused','unused');
+  d.state.nodes=[node({id:'0ca27c11aa',text:'设置'}),node({id:'0ca27c22bb',text:'WLAN',fingerprint:'fp-wlan'})];
+  assert.equal(d.find({id:'n0ca27c1'}).text,'设置');
+  assert.equal(d.find({id:'0ca27c11aa'}).text,'设置');
+  assert.equal(d.find({id:'n0ca27c2',fingerprint:'fp-wlan'}).text,'WLAN');
+  assert.equal(d.find({id:'n0ca27c2',text:'WLAN'}).text,'WLAN');
+  assert.throws(()=>d.find({id:'n0ca27c2',fingerprint:'fp-old'}),/该行内容已变化/);
+  assert.throws(()=>d.find({id:'nmissing'}),/未找到匹配节点/);
+  assert.throws(()=>d.find({id:'n0ca27c2',bogus:1} as any),/不支持的选择器字段/);
 });

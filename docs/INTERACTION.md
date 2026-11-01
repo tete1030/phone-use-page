@@ -38,10 +38,10 @@ try {
 
 | 入口 | 默认 | 其他取值 |
 |---|---|---|
-| `GET /api/observation` | `view=full`：完整观测与全部节点 | `compact`、`actionable` |
-| `GET /observe`（文字观察页） | 文本：只列可操作行 | `?view=compact`、`?view=full&format=json` 取回完整 JSON、`?format=json` 取投影 JSON |
-| `device.observe()` | 完整观测 | `device.observe({view:"actionable"})` |
-| `device.observeText()` | 文本：只列可操作行 | `device.observeText({view:"compact"})` |
+| `GET /api/observation` | `view=full`：完整观测与全部节点 | `compact`、`actionable`、`since=<snapshotId>` 只取变化 |
+| `GET /observe`（文字观察页） | 文本：只列可操作行 | `?view=compact`、`?view=full&format=json` 取回完整 JSON、`?format=json` 取投影 JSON、`?since=<snapshotId>` 只列变化 |
+| `device.observe()` | 完整观测 | `device.observe({view:"actionable"})`、`device.observe({view:"actionable",since})` |
+| `device.observeText()` | 文本：只列可操作行 | `device.observeText({view:"compact"})`、`device.observeText({since})` |
 
 控制台页面本身也接受 `?view=actionable`，打开即停在“可操作”筛选（实测同一页面的无障碍树从 23.8k 字符降到 16.1k），人工可随时切回“精简”。
 
@@ -60,6 +60,10 @@ n55cd01 · 指纹 · 点击→n44ab90 · [10,220→390,300]
 ```
 
 `actionable` 只保留可点击、可输入、可勾选、可长按、可滚动的行；`compact` 另保留有文字的叶子行，并去掉与可点祖先重复的标签。视图只是过滤，不改动作语义：点击仍按所选行的祖先规则解析，坐标仍是手机像素。
+
+观察可以带上一次看到的 `snapshotId`：`observe({since})` 只回此后新增或内容变化的行，每行带 `change:"added"|"changed"`，另给 `delta`（`added`、`changed`、`removed`、`unchanged`），消失的行以 `id` 与标签列在 `removed` 里。几何变化不算内容变化——列表只是重排时不会把整屏都报成变化。服务端只保留最近 8 个快照、10 分钟内有效；基准不在时 `delta.available=false`，并按完整视图返回，不报错。`view:"full"` 带 `since` 时仍回整棵树，只额外附一份 `delta` 统计。
+
+元素选择器除 `text`、`resourceId`、`description`、`className`、`package` 外，也接受观察行上印的 `id`（如 `n0ca27c`，完整树 id 同样可用）。`id` 只在该棵树内唯一，界面重排后可能指到别的行；要跨观察引用同一目标，再带上 `uiTree` 节点的 `fingerprint`，指纹不符直接报 `STALE_TARGET`，不会落到新行上。
 
 ## 随机落点
 

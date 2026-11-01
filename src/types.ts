@@ -26,7 +26,7 @@ export interface UiChange {
   rows:{total:number;added:number;removed:number;changed:number};
 }
 export interface ActionResult { execution?:'sent';verification?:'verified'|'not_verified'|'inconclusive'|'failed';requestId: string; status: 'ok'; backend: string; snapshotId: string; result?: unknown; jitter?:boolean; point?:{x:number;y:number};sourceTarget?:string;actionTarget?:string;changed?:boolean;elapsedMs?:number;foregroundApp?:string;changes?:UiChange }
-export interface Selector { text?: string; resourceId?: string; description?: string; className?: string; package?: string }
+export interface Selector { id?: string; fingerprint?: string; text?: string; resourceId?: string; description?: string; className?: string; package?: string }
 export interface AppEntry {packageName:string;thirdParty:boolean;launchers:string[]}
 export interface ActivityEntry {index:number;token:string;userId:number;component:string;state:string}
 export interface AndroidTask {taskId:number;userId:number;type:string;baseComponent:string;packageName:string;topComponent:string|null;activities:ActivityEntry[];foreground:boolean;available:boolean;switchable:boolean;fingerprint:string}

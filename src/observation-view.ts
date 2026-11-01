@@ -17,6 +17,8 @@ export interface ObservationRow {
   id:string;
   label:string;
   bounds:[number,number,number,number];
+  /** Set only in a delta view: this row is new since the base snapshot, or its content changed. */
+  change?:'added'|'changed';
   text?:string;
   description?:string;
   resourceId?:string;
@@ -32,6 +34,16 @@ export interface ObservationRow {
   longClickable?:true;
   scrollable?:true;
   focused?:true;
+}
+
+export interface ObservationDelta {
+  since:string;
+  /** False when the base snapshot is gone (evicted, too old, or from a previous process). */
+  available:boolean;
+  added:number;
+  changed:number;
+  removed:{id:string;label:string}[];
+  unchanged:number;
 }
 
 export interface ProjectedObservation {
@@ -50,6 +62,7 @@ export interface ProjectedObservation {
   focus:{id:string;label:string}|null;
   totalNodes:number;
   rows:ObservationRow[];
+  delta?:ObservationDelta;
   uiError?:string;
 }
 
@@ -104,6 +117,40 @@ export function projectObservation(state:Observation,view:Exclude<ObservationVie
 }
 
 const ago=(ms:number)=>ms<1000?'刚刚':(ms/1000).toFixed(1)+' 秒前';
+// Geometry is not content: a list that reflowed reads the same to an agent.
+const rowKey=(r:ObservationRow)=>JSON.stringify({...r,bounds:null,change:null});
+
+/** Keep only the rows that are new or whose content changed since `base`, and say what disappeared. */
+export function applyObservationDelta(current:ProjectedObservation,base:ProjectedObservation|undefined,since:string):ProjectedObservation {
+  if(!base)return {...current,delta:{since,available:false,added:0,changed:0,removed:[],unchanged:0}};
+  const before=new Map(base.rows.map(r=>[r.id,r] as [string,ObservationRow]));
+  const rows:ObservationRow[]=[];let added=0,changed=0,unchanged=0;
+  for(const r of current.rows){
+    const old=before.get(r.id);
+    if(!old){rows.push({...r,change:'added'});added++;continue;}
+    before.delete(r.id);
+    if(rowKey(old)!==rowKey(r)){rows.push({...r,change:'changed'});changed++;}else unchanged++;
+  }
+  const removed=[...before.values()].map(r=>({id:r.id,label:r.label}));
+  return {...current,rows,delta:{since,available:true,added,changed,removed,unchanged}};
+}
+
+/** The same summary over the full view's nodes, which has no rows to filter. */
+export function fullObservationDelta(current:Observation,base:Observation|undefined,since:string):ObservationDelta {
+  if(!base)return {since,available:false,added:0,changed:0,removed:[],unchanged:0};
+  const before=new Map(base.nodes.filter(n=>n.visible).map(n=>[n.id,n] as [string,AndroidNode]));
+  let added=0,changed=0,unchanged=0;
+  for(const n of current.nodes){
+    if(!n.visible)continue;
+    const old=before.get(n.id);
+    if(!old){added++;continue;}
+    before.delete(n.id);
+    if(old.fingerprint!==n.fingerprint)changed++;else unchanged++;
+  }
+  const removed=[...before.values()].map(n=>({id:shortId(n,base.nodes),label:label(n,base.nodes)}));
+  return {since,available:true,added,changed,removed,unchanged};
+}
+
 const shortRid=(n:ObservationRow,foregroundApp:string)=>{
   const rid=n.resourceId||'';
   if(foregroundApp&&rid.startsWith(foregroundApp+':id/'))return rid.slice(foregroundApp.length+1);
@@ -111,6 +158,7 @@ const shortRid=(n:ObservationRow,foregroundApp:string)=>{
 };
 export function rowText(n:ObservationRow,foregroundApp=''):string {
   const flags:string[]=[];
+  if(n.change)flags.push(n.change==='added'?'新增':'变化');
   if(n.disabled)flags.push('不可用');
   if(n.password)flags.push('密码（不回读）');
   else if(n.checked!==undefined)flags.push(n.checked?'开关：开':'开关：关');
@@ -133,8 +181,10 @@ export function renderObservationText(p:ProjectedObservation,now=Date.now()):str
   const stale=now-p.collectedAt>15000?' · 已过期，请刷新':'';
   lines.push(`快照 ${p.snapshotId||'无'} · ${ago(now-p.collectedAt)} · 前台 ${p.foregroundApp||'未知'} · ${p.rows.length}/${p.totalNodes} 行（${viewLabel}）${stale}`);
   lines.push(p.focus?`焦点 ${p.focus.id} ${p.focus.label}`:'焦点 无（手机输入框未获得焦点）');
+  if(p.delta){const d=p.delta;lines.push(d.available?`变化 · 相对 ${d.since}：新增 ${d.added} · 变化 ${d.changed} · 消失 ${d.removed.length} · 未变 ${d.unchanged} 行`:`基准快照 ${d.since} 已不可用，返回完整视图`);}
   if(p.uiError)lines.push('采集错误：'+p.uiError);
   lines.push('');
   lines.push(...p.rows.map(n=>rowText(n,p.foregroundApp)));
+  if(p.delta?.removed.length)lines.push('',...p.delta.removed.map(r=>`消失 ${r.id} ${r.label}`));
   return lines.join('\n');
 }

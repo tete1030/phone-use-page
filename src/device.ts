@@ -39,6 +39,10 @@ export class Device extends EventEmitter {
   authorize:(owner:string)=>void=()=>{};
   private tail: Promise<unknown> = Promise.resolve(); private collecting?: Promise<Observation>;private collectingAt=0;
   private nextCapture?:Promise<Observation>;private resettingControl?:Promise<void>;
+  // Recent trees by snapshotId, so an observe with `since` can answer with the
+  // changed rows instead of the whole screen. Bounded and short-lived: an agent
+  // that comes back much later gets a full view rather than a guess.
+  private snapshots=new Map<string,Observation>();
   private sessionActive=false;
   private pendingActions=0;private manualTouchOwner?:string;
   get touching(){return !!this.manualTouchOwner;}
@@ -115,6 +119,10 @@ export class Device extends EventEmitter {
       this.state.foregroundApp=result.nodes.find(n=>n.package&&!n.package.startsWith('com.android.systemui'))?.package||result.nodes[0]?.package||'';
       const fields=result.nodes.filter(n=>n.focused&&n.editable&&!n.password);this.state.focus=fields.length===1?fields[0]!:null;this.state.focusReason=fields.length>1?'AMBIGUOUS_FOCUS':fields.length===1?null:'NO_EDITABLE_FOCUS';
       if(previousFocus!==this.state.focus?.id)this.state.focusEpoch++;
+      if(!this.snapshots.has(this.state.snapshotId)){
+        this.snapshots.set(this.state.snapshotId,structuredClone(this.state));
+        while(this.snapshots.size>8)this.snapshots.delete(this.snapshots.keys().next().value as string);
+      }
       this.notify();return structuredClone(this.state);
     } catch(error){if(error instanceof ConsoleError&&['BRIDGE_EXIT','BRIDGE_TIMEOUT','BRIDGE_CLOSED'].includes(error.code))this.state.connected=false;this.state.foregroundApp='';this.state.uiError=String(error);if(this.state.focus){this.state.focus=null;this.state.focusEpoch++;}this.notify();throw error;}
   }
@@ -147,12 +155,23 @@ export class Device extends EventEmitter {
     if(!node.enabled||!node.visible)throw new ConsoleError('UNAVAILABLE_TARGET','目标不可用或不在有效屏幕区域',409);
     return node;
   }
+  /** The tree a caller already saw, kept for incremental reads; undefined once evicted or stale. */
+  snapshot(id:string):Observation|undefined {const s=this.snapshots.get(id);return s&&Date.now()-s.collectedAt<=600000?s:undefined;}
   find(selector:Selector):AndroidNode {
     if(!selector||!Object.keys(selector).length)throw new ConsoleError('INVALID_SELECTOR','选择器不能为空');
-    const allowed=['text','resourceId','description','className','package'];
+    const allowed=['id','fingerprint','text','resourceId','description','className','package'];
     if(Object.keys(selector).some(k=>!allowed.includes(k)))throw new ConsoleError('INVALID_SELECTOR','不支持的选择器字段');
-    const matches=this.state.nodes.filter(n=>Object.entries(selector).every(([k,v])=>n[k as keyof AndroidNode]===v));
-    if(!matches.length)throw new ConsoleError('TARGET_NOT_FOUND','未找到匹配节点',404);
+    // `id` is the row id an observation shows (`n0ca27c`); the raw tree id is
+    // accepted too. The printed id is a prefix made unique for that tree, so a
+    // caller that wants to pin content across observations adds the fingerprint.
+    const nodes=this.state.nodes;
+    const byId=(n:AndroidNode)=>selector.id===undefined||n.id===selector.id||shortId(n,nodes)===selector.id;
+    const matches=nodes.filter(n=>byId(n)&&(selector.fingerprint===undefined||n.fingerprint===selector.fingerprint)
+      &&Object.entries(selector).every(([k,v])=>k==='id'||k==='fingerprint'||n[k as keyof AndroidNode]===v));
+    if(!matches.length){
+      if(selector.id!==undefined&&selector.fingerprint!==undefined&&nodes.some(byId))throw new ConsoleError('STALE_TARGET','该行内容已变化（指纹不符），请重新观察',409);
+      throw new ConsoleError('TARGET_NOT_FOUND','未找到匹配节点',404);
+    }
     if(matches.length!==1){const sample=matches.slice(0,3).map(n=>`${shortId(n,this.state.nodes)} ${label(n,this.state.nodes)}`).join(' / ');throw new ConsoleError('AMBIGUOUS_TARGET',`匹配到多个节点（共 ${matches.length} 个：${sample}），请补充 resourceId 或 className`,409);}
     return matches[0]!;
   }

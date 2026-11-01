@@ -10,7 +10,7 @@ import { promisify } from 'node:util';
 import { resolve } from 'node:path';
 import { z } from 'zod';
 import { Device,keyCodes } from './device.js';
-import { observationView,projectObservation,renderObservationText } from './observation-view.js';
+import { observationView,projectObservation,renderObservationText,applyObservationDelta,fullObservationDelta,type ObservationView } from './observation-view.js';
 import { Tasks } from './tasks.js';
 import { ConsoleError } from './types.js';
 import { render,readAssetVersion } from './ui.js';
@@ -88,7 +88,13 @@ app.post(endpoint('/api/connection/resume'),async req=>{
   const connection=pages.require(p.pageId,s.id,p.connectionId,true);suspendConnection(connection,'CLIENT_RECONNECT');
   return serialized(async()=>{const current=pages.resume(p.pageId,s.id,p.connectionId);await rtc.retain(current.owner,p.videoAttemptId);pages.require(p.pageId,s.id,p.connectionId,true);(req as any).auditOwner=current.owner;connectionAudit(current,'resume_attempt','ORIGINAL_SESSION');return {connectionId:current.owner,generation:current.generation,graceMs:RECOVERY_GRACE_MS};});
 });
-app.get(endpoint('/api/observation'),async req=>{session(req);const view=observationView((req.query as any)?.view,'full');return view==='full'?device.state:projectObservation(device.state,view);});
+// 观察的两种形状共用一条出口：view=full 回整棵树，其余回行；带上 since 时只回变化的行。
+function observed(view:ObservationView,since?:string){
+  if(view==='full')return since?{...device.state,delta:fullObservationDelta(device.state,device.snapshot(since),since)}:device.state;
+  const projected=projectObservation(device.state,view),base=since?device.snapshot(since):undefined;
+  return since?applyObservationDelta(projected,base?projectObservation(base,view):undefined,since):projected;
+}
+app.get(endpoint('/api/observation'),async req=>{session(req);const q=req.query as any;return observed(observationView(q?.view,'full'),typeof q?.since==='string'&&q.since?q.since:undefined);});
 installWebRtcRoutes(app,endpoint,session,rtc);
 installClientVideoLog(app,endpoint,{session:req=>session(req,true,true)});
 app.post(endpoint('/api/video/select'),req=>{const s=session(req,true),p=z.object({attemptId:z.string().uuid()}).strict().parse(req.body);return rtc.select(s.owner,p.attemptId);});
@@ -128,8 +134,9 @@ app.get(endpoint('/tasks/:id'),async(req,reply)=>{const s=session(req);const t=t
 app.get(endpoint('/observe'),async(req,reply)=>{
   session(req);
   const query=req.query as any,view=observationView(query.view),format=query.format==='json'?'json':'text';
-  if(format==='json'){const body=view==='full'?device.state:projectObservation(device.state,view);return reply.type('application/json; charset=utf-8').send(JSON.stringify(body,null,1));}
-  return reply.type('text/plain; charset=utf-8').send(renderObservationText(projectObservation(device.state,view==='full'?'actionable':view)));
+  const since=typeof query.since==='string'&&query.since?query.since:undefined;
+  if(format==='json')return reply.type('application/json; charset=utf-8').send(JSON.stringify(observed(view,since),null,1));
+  return reply.type('text/plain; charset=utf-8').send(renderObservationText(observed(view==='full'?'actionable':view,since) as ReturnType<typeof projectObservation>));
 });
 function websocketAudit(req:any,path:string,owner:string|undefined,action:string,closeCode?:number,reason?:string){audit.record({at:new Date().toISOString(),method:'EVENT',path,status:200,ip:req.ip,client:String(req.headers['user-agent']||'').slice(0,300),owner,action,closeCode,reason:reason?.slice(0,120)});}
 function rejectSocket(ws:any,error:any){const reason=error.code||'ORIGIN_REJECTED';ws.send(JSON.stringify({type:reason==='STALE_TRANSPORT'?'recovering':'offline',reason}));ws.close(4001,reason);}
