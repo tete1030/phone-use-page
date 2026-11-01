@@ -19,6 +19,10 @@ power_cache = {'at': 0, 'awake': False, 'locked': None}
 info_cache = {'at': 0.0, 'value': None, 'rotation': None}
 last_nodes = []
 last_window = ''
+# FLAG_SECURE windows are blanked in every capture path scrcpy uses. The flag
+# rarely changes inside one window, so the extra dumpsys runs only when the
+# focused window changes (or after two seconds, for in-place flips).
+secure_cache = {'window': None, 'at': 0.0, 'secure': False}
 
 
 def current_window():
@@ -30,6 +34,21 @@ def current_window():
                 return match.group(1)
         time.sleep(0.08)
     raise AppStateError('UI_WINDOW_UNAVAILABLE', '当前窗口暂不可确认，请稍后读取界面', 503)
+
+
+def secure_display(window):
+    # Only the focused window matters: another window may legitimately be
+    # secure while the visible screen is not. Walk the dump until the block
+    # whose header carries this window token, then look for SECURE in its flags.
+    if secure_cache['window'] == window and time.monotonic() - secure_cache['at'] < 2.0:
+        return secure_cache['secure']
+    command = ("dumpsys window windows | awk -v w='%s' '"
+               "/^  Window #[0-9]/ {if (i && s) {print 1; exit} i=(index($0,w)>0); s=0; next} "
+               "i && /fl=/ && /SECURE/ {s=1} "
+               "END {if (i && s) print 1}'") % window
+    value = connect().shell(command).output or ''
+    secure_cache.update(window=window, at=time.monotonic(), secure=bool(value.strip()))
+    return secure_cache['secure']
 
 
 def stamp(node):
@@ -163,7 +182,8 @@ def tree():
         node['fingerprint'] = stamp(node)
     return {'nodes': nodes, 'rotation': info.get('displayRotation', int(root.attrib.get('rotation', 0))),
             'width': width, 'height': height,
-            'screenOn': power_cache['awake'], 'locked': power_cache['locked'], 'windowId': window, 'elapsedMs': round((time.monotonic() - start) * 1000, 1)}
+            'screenOn': power_cache['awake'], 'locked': power_cache['locked'], 'windowId': window,
+            'secure': secure_display(window), 'elapsedMs': round((time.monotonic() - start) * 1000, 1)}
 
 
 def text_object(selector, instance=0, bounds=None, strict_bounds=True):

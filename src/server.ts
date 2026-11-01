@@ -28,6 +28,7 @@ import {installClientVideoLog,CLIENT_VIDEO_ERROR_PATH} from './client-video-log.
 import {ParallelWebRtcVideo} from './parallel-webrtc.js';
 import { normalizeBasePath,consolePath,internalPath,permittedHost } from './paths.js';
 import {selectAndroidDevice} from './device-selection.js';
+import {SecureFrame} from './secure-frame.js';
 
 const exec=promisify(execFile),port=Number(process.env.PORT||8780),host=process.env.HOST||'127.0.0.1';
 const basePath=normalizeBasePath(process.env.CONSOLE_BASE_PATH),endpoint=(path:string)=>consolePath(basePath,path);
@@ -43,6 +44,7 @@ await exec(adb,['start-server']);
 const list=await exec(adb,['devices']);
 const serial=selectAndroidDevice(list.stdout,process.env.ANDROID_SERIAL);
 const device=new Device(serial,python,adb),tasks=new Tasks(device);await tasks.init();
+const secureFrame=new SecureFrame(adb,serial);
 const mediaConfig=rtcConfig(process.env);
 const rtc=new ParallelWebRtcVideo(device.video,mediaConfig,new TurnCredentials(mediaConfig.turn,mediaConfig.stunUrl,await loadTurnKey(mediaConfig.turn)),mediaConfig.fallbackTurn?new TurnCredentials(mediaConfig.fallbackTurn,mediaConfig.stunUrl,await loadTurnKey(mediaConfig.fallbackTurn)):undefined);
 function syncVideoPower(){const state=device.state,reason=state.powerError||!state.powerCollectedAt||Date.now()-state.powerCollectedAt>10000?'power_unknown':!state.screenOn?'screen_off':state.locked!==false?'locked':null;rtc.setVideoPaused(reason!==null,reason);}
@@ -108,6 +110,7 @@ app.get(endpoint('/api/android-tasks'),async req=>{session(req);return device.na
 app.get(endpoint('/api/running-apps'),async req=>{session(req);const state=await device.appState();return {userId:state.catalog.userId,collectedAt:state.collectedAt,processScope:state.processScope,apps:state.processes};});
 app.get(endpoint('/api/navigation'),async req=>{session(req);return device.navigation();});
 app.post(endpoint('/api/activity'),req=>{const s=session(req,true);pages.activity(s.owner);return {ok:true};});
+app.get(endpoint('/api/secure-frame'),async(req,reply)=>{const s=session(req);const p=z.object({w:z.coerce.number().int().min(1).max(4320).optional(),h:z.coerce.number().int().min(1).max(8640).optional()}).parse(req.query);pages.requireOwner(s.owner);if((p.w===undefined)!==(p.h===undefined))throw new ConsoleError('INVALID_SIZE','安全截图的宽高必须同时给出',400);const image=await secureFrame.capture(p.w,p.h);return reply.type('image/png').header('Cache-Control','no-store').header('X-Content-Type-Options','nosniff').send(image);});
 app.get(endpoint('/api/screenshot'),async(req,reply)=>{const s=session(req);const image=await device.bridge.call('screenshot');pages.requireOwner(s.owner);return reply.type(image.mime).header('Content-Disposition','attachment; filename=phone-'+Date.now()+'.'+(image.mime==='image/png'?'png':'jpg')).send(Buffer.from(image.data,'base64'));});
 app.post(endpoint('/api/panel'),async req=>{const s=session(req,true),p=z.object({requestId:z.string().uuid(),kind:z.enum(['notifications','settings'])}).parse(req.body);return once(req,()=>device.panel(s.owner,p.kind));});
 app.post(endpoint('/api/clipboard'),async req=>{const s=session(req,true),p=z.object({write:z.boolean().default(false),text:z.string().max(32768).optional()}).parse(req.body);pages.activity(s.owner);return device.enqueue(s.owner,async()=>{await device.ensureInteractive();return device.bridge.call('clipboard',p);});});

@@ -1,0 +1,77 @@
+From AOSP 12 (android-12.1.0_r1) frameworks/base/cmds/screencap/screencap.cpp.
+Apply with `git apply` in the platform tree, then `m screencap` and copy
+out/target/product/generic_arm64/system/bin/screencap to vendor/screencap-secure-arm64.
+-a captures FLAG_SECURE layers (needs uid 0 or CAPTURE_BLACKOUT_CONTENT);
+-w/-H set the capture buffer size.
+
+--- screencap.cpp.orig-secure	2026-11-01 17:53:18.832737992 +0800
++++ screencap.cpp	2026-11-01 18:01:53.184495627 +0800
+@@ -32,6 +32,7 @@
+ 
+ #include <gui/ISurfaceComposer.h>
+ #include <gui/SurfaceComposerClient.h>
++#include <gui/LayerState.h>
+ #include <gui/SyncScreenCaptureListener.h>
+ 
+ #include <ui/GraphicTypes.h>
+@@ -48,9 +49,10 @@
+ static void usage(const char* pname, PhysicalDisplayId displayId)
+ {
+     fprintf(stderr,
+-            "usage: %s [-hp] [-d display-id] [FILENAME]\n"
++            "usage: %s [-hps] [-d display-id] [FILENAME]\n"
+             "   -h: this message\n"
+             "   -p: save the file as a png.\n"
++            "   -s: include secure (FLAG_SECURE) layers\n"
+             "   -d: specify the physical display ID to capture (default: %s)\n"
+             "       see \"dumpsys SurfaceFlinger --display-id\" for valid display IDs.\n"
+             "If FILENAME ends with .png it will be saved as a png.\n"
+@@ -129,8 +131,10 @@
+ 
+     const char* pname = argv[0];
+     bool png = false;
++    bool secure = false;
++    int reqWidth = 0, reqHeight = 0;
+     int c;
+-    while ((c = getopt(argc, argv, "phd:")) != -1) {
++    while ((c = getopt(argc, argv, "phsw:H:d:")) != -1) {
+         switch (c) {
+             case 'p':
+                 png = true;
+@@ -138,6 +142,15 @@
+             case 'd':
+                 displayId = PhysicalDisplayId(atoll(optarg));
+                 break;
++            case 's':
++                secure = true;
++                break;
++            case 'w':
++                reqWidth = atoi(optarg);
++                break;
++            case 'H':
++                reqHeight = atoi(optarg);
++                break;
+             case '?':
+             case 'h':
+                 usage(pname, *displayId);
+@@ -182,7 +195,19 @@
+     ProcessState::self()->startThreadPool();
+ 
+     sp<SyncScreenCaptureListener> captureListener = new SyncScreenCaptureListener();
+-    status_t result = ScreenshotClient::captureDisplay(displayId->value, captureListener);
++    status_t result;
++    if (secure) {
++        DisplayCaptureArgs args;
++        args.displayToken = SurfaceComposerClient::getPhysicalDisplayToken(*displayId);
++        args.captureSecureLayers = true;
++        args.allowProtected = false;
++        args.width = reqWidth > 0 ? reqWidth : 0;
++        args.height = reqHeight > 0 ? reqHeight : 0;
++        args.pixelFormat = ui::PixelFormat::RGBA_8888;
++        result = ScreenshotClient::captureDisplay(args, captureListener);
++    } else {
++        result = ScreenshotClient::captureDisplay(displayId->value, captureListener);
++    }
+     if (result != NO_ERROR) {
+         close(fd);
+         return 1;

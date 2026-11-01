@@ -321,7 +321,7 @@ async function initialize() {
   q('.video-reconnect').addEventListener('click',()=>{if(!online)return;videoManager?.stop();connectVideo();log('重新建立视频，不改变设备控制连接');});
   q('.video-enlarge').addEventListener('click',()=>void enterImmersive());
   addEventListener('keydown',event=>{if(event.key==='Escape'&&phonePane.classList.contains('enlarged')){void exitImmersive();}});
-  q('.screenshot-save').addEventListener('click',async()=>{try{const response=await fetch(viewUrl('/api/screenshot'));if(!response.ok)throw Error('截图失败');const value=URL.createObjectURL(await response.blob()),link=document.createElement('a');link.href=value;link.download='phone-'+Date.now()+'.png';link.click();setTimeout(()=>URL.revokeObjectURL(value),5000);}catch(error){log(String(error));}});
+  q('.screenshot-save').addEventListener('click',async()=>{try{const response=await fetch(viewUrl(observation.secure?'/api/secure-frame':'/api/screenshot'));if(!response.ok)throw Error('截图失败');const value=URL.createObjectURL(await response.blob()),link=document.createElement('a');link.href=value;link.download='phone-'+Date.now()+'.png';link.click();setTimeout(()=>URL.revokeObjectURL(value),5000);}catch(error){log(String(error));}});
   q('.wake').addEventListener('click',()=>void wakePhone());
   q('.app-drawer-toggle').addEventListener('click',()=>void perform('/api/app-drawer',{}).catch(()=>{}));
   qa('[data-press]').forEach(b=>b.addEventListener('click',()=>void perform('/api/press',{key:b.dataset.press}).catch(()=>{})));
@@ -350,6 +350,29 @@ async function initialize() {
   for(const method of boot.apiMethods){const entry=document.createElement('section');entry.className='api-entry';const head=document.createElement('h3');head.className='api-signature';head.textContent=method.signature;entry.append(head);for(const value of [method.purpose,method.params,method.result]){const p=document.createElement('p');p.textContent=value;entry.append(p);}const example=document.createElement('pre');example.className='api-example';example.textContent=method.example;const note=document.createElement('p');note.className='dim';note.textContent=method.note;const button=document.createElement('button');button.type='button';button.className='api-insert';button.textContent='插入 '+method.name+' 示例';button.addEventListener('click',()=>{editor.setRangeText(method.example+'\n',editor.selectionStart,editor.selectionEnd,'end');apiVisibility(false,true);});entry.append(example,note,button);q('.api-details').append(entry);}
   q('.api-toggle').addEventListener('click',()=>apiVisibility(!!q<HTMLElement>('.api-panel').hidden));q('.api-panel').addEventListener('keydown',event=>{if((event as KeyboardEvent).key==='Escape'){event.preventDefault();event.stopPropagation();apiVisibility(false,true);}});
   function offlineReason(reason:string){if(reason==='IDLE_TIMEOUT')return '5分钟无操作，本页已断开；刷新或点击重新连接即可继续。';if(reason==='RECOVERY_TIMEOUT')return '恢复连接超时，请点击重新连接或刷新。';if(reason==='ORIGIN_REJECTED')return '连接来源验证失败，请刷新页面。';return reason==='PAGE_REPLACED'?'另一页面已连接，本页已离线；本页批量操作已停止。':reason==='SERVER_RESTART'?'服务已重启，请刷新页面重新连接。':['LOGIN_REQUIRED','LOGGED_OUT'].includes(reason)?'登录已失效，请刷新并重新登录。':'连接已断开，画面和状态已暂停。';}
+  const secureCanvas=q<HTMLImageElement>('.secure-canvas'),secureToggle=q<HTMLButtonElement>('.secure-toggle');
+  let secureForced=false,secureLoop=false,secureBusy=false,secureError=false,secureTimer:number|undefined,secureObjectUrl:string|undefined,secureNotice='';
+  const secureOn=()=>online&&(secureForced||!!observation.secure);
+  function scheduleSecure(delay:number){secureTimer=window.setTimeout(()=>{secureTimer=undefined;void pollSecureFrame();},delay);}
+  async function pollSecureFrame(){
+    if(secureBusy||!secureOn()){secureLoop=false;return;}
+    if(!(observation.width>0&&observation.height>0)){scheduleSecure(500);return;}
+    secureBusy=true;const epoch=connectionEpoch;
+    try{const w=Math.max(1,Math.round(observation.width/2)),h=Math.max(1,Math.round(observation.height/2));const response=await fetch(viewUrl('/api/secure-frame')+'&w='+w+'&h='+h+'&t='+Date.now(),{cache:'no-store'});if(!response.ok)throw Error('安全截图 '+response.status);const url=URL.createObjectURL(await response.blob());if(!secureOn()||epoch!==connectionEpoch){URL.revokeObjectURL(url);return;}const old=secureObjectUrl;secureObjectUrl=url;secureCanvas.src=url;secureCanvas.hidden=false;if(old)setTimeout(()=>URL.revokeObjectURL(old),2000);secureError=false;secureNotice='';}
+    catch(error){secureError=true;const message=String(error instanceof Error?error.message:error);if(secureNotice!==message){secureNotice=message;log('安全截图不可用：'+message);}}
+    finally{secureBusy=false;if(secureOn())scheduleSecure(secureError?3000:200);else secureLoop=false;}
+  }
+  // FLAG_SECURE 界面（登录页、支付页等）在视频和截图里是黑的；桥接层报告该状态后，
+  // 用 root 安全截图铺在画面上。视频通道照旧运行，只是被这一层盖住。
+  function renderSecureView(){
+    const on=secureOn();
+    secureToggle.setAttribute('aria-pressed',String(on));
+    secureToggle.textContent=secureForced?'安全画面：手动':on?'安全画面：自动':'安全截图';
+    if(!on){secureCanvas.hidden=true;if(secureTimer!==undefined){clearTimeout(secureTimer);secureTimer=undefined;}if(secureObjectUrl){URL.revokeObjectURL(secureObjectUrl);secureObjectUrl=undefined;secureCanvas.removeAttribute('src');}return;}
+    if(secureLoop)return;
+    secureLoop=true;void pollSecureFrame();
+  }
+  secureToggle.addEventListener('click',()=>{secureForced=!secureForced;renderSecureView();});
   function renderPhone(){q<HTMLElement>('.mobile-reconnect').hidden=online||connecting;assign(q('.mobile-status'),recovering?'正在恢复连接':!online?'已离线':!powerKnown()?'手机状态待确认':!observation.screenOn?'手机息屏':observation.locked===null?'手机状态待确认':observation.locked===true?'手机锁屏':touch?.active()?'触摸中':textPending?'正在处理文字':touchNotice?'手势已取消，详情见工具日志':touchReady()?'触摸就绪':'控制准备中');const known=powerKnown(),awake=observation.screenOn,unlocked=observation.locked===false;
     const title=recovering?'':!online?(connecting?'正在连接':'已离线'):waking?'正在唤醒并解锁':!known?'':!awake?'屏幕已关闭':observation.locked===true?'手机已锁屏':'';
     q<HTMLElement>('.screen-shield').hidden=!title;assign(q('.screen-title'),title);
@@ -358,7 +381,7 @@ async function initialize() {
     phone.setAttribute('aria-label',!online?'手机画面，当前页面已离线':needsWake()?'手机画面，点击唤醒并解锁':!interactive()?'手机画面，控制状态待确认':'手机画面，支持点击、长按和拖动，聚焦后键盘输入手机');
     q<HTMLButtonElement>('.wake').disabled=!online||!transportReady||waking||taskBusy||appsBusy;
     qa('[data-press],[data-gesture],[data-mode],[data-panel],.app-drawer-toggle').forEach(b=>(b as HTMLButtonElement).disabled=!interactive()||!controlAllowed||appsBusy);
-    videoManager?.pauseChanged();renderVideoState();
+    videoManager?.pauseChanged();renderVideoState();renderSecureView();
   }
   async function wakePhone(){if(!online||!transportReady||waking||taskBusy||appsBusy)return;waking=true;renderPhone();try{const result=await perform('/api/wake',{});if(result){observation.screenOn=result.screenOn;observation.locked=result.locked;observation.powerCollectedAt=Date.now();}}
     catch(e){log(String(e));}finally{waking=false;renderPhone();textState();details();}}
