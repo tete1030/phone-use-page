@@ -1,4 +1,4 @@
-export const SDK_VERSION='1.7.0';
+export const SDK_VERSION='1.8.0';
 export const apiMethods = [
   {name:'device.observe(options)',signature:'device.observe({view="full",since}={}): Promise<Observation|ProjectedObservation>',purpose:'只读：请求一次新的安卓节点采集。',params:'view：full（默认，完整节点）、actionable（只列可操作行）、compact（可操作行加文字）；since：上一次观察的 snapshotId，给出后只返回此后新增或内容变化的行。',result:'view=full 返回 snapshotId、captureSeq、collectedAt、windowId、foregroundApp、nodes、focus 与错误；其余视图返回 rows，每行含 id、label、bounds、resourceId 及可点/可编辑/已禁用等标记。带 since 时另有 delta（added、changed、removed、unchanged），rows 只留变化行并带 change: "added" | "changed"，removed 是消失的行。',example:'const seen = await device.observe({ view: "actionable" });\n// 之后再观察，只取变化：\nconst delta = await device.observe({ view: "actionable", since: seen.snapshotId });\nreturn delta.rows;',note:'内容未变时 snapshotId 不变，captureSeq 仍增加。项目化视图省略全为假的字段，并给出点击会落在哪个祖先行。since 只保留最近 8 个快照且不超过 10 分钟；基准不在时 delta.available=false，并返回完整视图。SDK 错误提供 code；已发送动作另带 execution、verification，不自动重试。'},
   {name:'device.observeText(options)',signature:'device.observeText({view="actionable",since}={}): Promise<string>',purpose:'只读：同一份采集的文字版本，一行一个节点。',params:'view：actionable（默认）或 compact；since：上一次观察的 snapshotId，只输出变化行。',result:'返回多行文字：一行状态头、一行快照信息、一行焦点，随后每行 `<id> <名称> · 能力 · [l,t→r,b] · id/资源`。带 since 时多一行变化统计，末尾列出消失的行。',example:'console.log(await device.observeText({ since: "ui-12" }));',note:'给文字与 LLM Agent 读；内容与网页节点列表一致，不额外换算坐标。'},
@@ -24,6 +24,7 @@ export const apiMethods = [
   {name:'device.back(options)',signature:'device.back({steps=1,stopOnTaskChange=true,intervalMs=350}={}): Promise<BackResult>',purpose:'顺序发送 BACK，每次回读系统导航状态。',params:'steps 1–10；intervalMs 100–2000 ms；默认前台任务/包变化后停止后续按键。',result:'返回 requested、completed、reason、逐步 transitions；可被停止任务取消。',example:'return await device.back({steps:2});',note:'次数是按键次数，可能先关闭输入法或弹窗；不保证页面层数或最后一次不会退出应用。'},
   {name:'device.uiTree() / screenshot()',signature:'device.uiTree(): Promise<AndroidNode[]>',purpose:'只读获取树；screenshot 读取诊断图。',params:'无参数。',result:'uiTree 返回节点；screenshot 返回 {mime,data}，data 为 Base64。',example:'return await device.uiTree();',note:'视频使用独立连续流，截图不作为实时视频替代。'},
   {name:'device.panel(kind)',signature:'device.panel("notifications" | "settings"): Promise<ActionResult>',purpose:'展开通知栏或控制中心。',params:'kind为notifications或settings。',result:'返回已发送回执；面板呈现需观察。',example:'await device.panel("notifications");',note:'ROM可能限制设置面板展开，非导航返回栈。'},
+  {name:'device.appDrawer()',signature:'device.appDrawer(): Promise<ActionResult>',purpose:'回到桌面并打开手机自己的应用抽屉（Launcher3 的 All Apps）。',params:'无参数。',result:'返回回执：已发送、未验证，backend 记录实际用的手势后端；changes 说明前台与节点变化。',example:'await device.appDrawer();',note:'先按 HOME 再上滑，会离开当前应用；抽屉内的搜索与排序由手机桌面决定，控制台“应用与包”是另一份列表。该镜像的 Launcher3 不响应 ACTION_ALL_APPS，只能用桌面手势。'},
   {name:'device.clipboard()',signature:'device.clipboard(): Promise<{text:string}>',purpose:'按需读取手机剪贴板。',params:'无参数。',result:'返回text；Android拒绝时明确报错。',example:'return await device.clipboard();',note:'不会自动覆盖网页草稿或粘贴。'},
   {name:'device.setClipboard(text)',signature:'device.setClipboard(text): Promise<ActionResult>',purpose:'写手机剪贴板，不自动粘贴。',params:'Unicode字符串，最多32768字符。',result:'返回已发送、未验证。',example:'await device.setClipboard("hello");',note:'手机权限受ROM限制。'},
 
@@ -32,7 +33,7 @@ export const apiMethods = [
 export function sdkBootstrap() {
   return `const call=(method,params={})=>__rpc(method,JSON.stringify(params)).then(JSON.parse);
   globalThis.device=Object.freeze({
-    panel:(kind)=>call('panel',{kind}),clipboard:()=>call('clipboard',{write:false}),setClipboard:(text)=>call('clipboard',{write:true,text}),observe:(options={})=>call('observe',options),observeText:(options={})=>call('observeText',options),uiTree:()=>call('uiTree'),screenshot:()=>call('screenshot'),
+    panel:(kind)=>call('panel',{kind}),appDrawer:()=>call('appDrawer',{}),clipboard:()=>call('clipboard',{write:false}),setClipboard:(text)=>call('clipboard',{write:true,text}),observe:(options={})=>call('observe',options),observeText:(options={})=>call('observeText',options),uiTree:()=>call('uiTree'),screenshot:()=>call('screenshot'),
     element:(selector)=>Object.freeze({
       click:(options={})=>call('node',{selector,action:'click',clickOptions:options}),
       longPress:(options={})=>{const {durationMs,...clickOptions}=options;return call('node',{selector,action:'longPress',value:durationMs??700,clickOptions});},

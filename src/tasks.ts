@@ -54,6 +54,7 @@ export class Tasks extends EventEmitter {
   private async rpc(method:string,p:any,owner:string,taskId:string,signal:AbortSignal,clickOptions:ResolvedClickOptions={jitter:true,realism:'auto'}):Promise<unknown>{
     if(signal.aborted)throw new ConsoleError('CANCELLED','任务已停止');this.onActivity(owner);
     if(method==='panel'){if(!['notifications','settings'].includes(p.kind))throw new ConsoleError('INVALID_PANEL','无效面板');return this.device.panel(owner,p.kind,taskId);}
+    if(method==='appDrawer')return this.device.appDrawer(owner,taskId,signal);
     if(method==='clipboard'){if(p.write&&(typeof p.text!=='string'||p.text.length>32768))throw new ConsoleError('TEXT_LIMIT','剪贴板文字无效');return this.device.enqueue(owner,async()=>{await this.device.ensureInteractive();return this.device.bridge.call('clipboard',p);},taskId);}
     if(method==='observe'){
       const o=await this.device.collect({fresh:true,reuseMs:300}),view=observationView(p?.view,'full'),since=typeof p?.since==='string'&&p.since?p.since:undefined;

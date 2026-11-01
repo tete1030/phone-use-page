@@ -229,6 +229,27 @@ export class Device extends EventEmitter {
     },task);
   }
   async panel(session:string,kind:'notifications'|'settings',task?:string){return this.enqueue(session,async()=>{await this.ensureInteractive();const beforeUi=this.uiStamp();await this.video.panel(kind);await this.afterApplicationAction();return {status:'ok',execution:'sent',verification:'not_verified',snapshotId:this.state.snapshotId,changes:this.uiChange(beforeUi)};},task);}
+  /**
+   * Open the launcher's own app drawer. AOSP Launcher3 on this image does not
+   * publish an activity for ACTION_ALL_APPS, so the supported path is the
+   * launcher's own surface: HOME first (the drawer belongs to the launcher, not
+   * to whatever app is in front), then the swipe up that reveals All Apps.
+   */
+  async appDrawer(session:string,task?:string,signal?:AbortSignal){return this.enqueue(session,async()=>{
+    await this.ensureInteractive();this.claim(session,task);
+    if(!this.state.width||!this.state.height)await this.collect();
+    const beforeSnapshot=this.state.snapshotId,beforeForeground=this.state.foregroundApp,beforeUi=this.uiStamp();
+    await this.video.press(keyCodes.HOME!);
+    // Let the launcher settle before swiping on its workspace; swiping during
+    // the return-to-home transition is read as a scroll and the drawer stays shut.
+    await cancellablePause(600,signal);
+    this.claim(session,task);this.assertScreen();
+    const w=this.state.width,h=this.state.height;
+    const spec:GestureSpec={kind:'swipe',x1:Math.round(w/2),y1:Math.round(h*.79),x2:Math.round(w/2),y2:Math.round(h*.29),durationMs:400};
+    const {backend,detail}=await this.performGesture(spec,'auto',this.resolved??UNPROBED,signal,session,task);
+    await this.afterApplicationAction();
+    return {status:'ok',execution:'sent',verification:'not_verified',backend:`appDrawer:${backend}:${detail}`,snapshotId:this.state.snapshotId,changed:this.state.snapshotId!==beforeSnapshot||this.state.foregroundApp!==beforeForeground,foregroundApp:this.state.foregroundApp,changes:this.uiChange(beforeUi),uiError:this.state.uiError};
+  },task);}
   async readText(session:string,target:Target){
     return this.enqueue(session,async()=>{
       await this.ensureInteractive();const n=await this.target(target);

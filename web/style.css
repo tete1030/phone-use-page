@@ -507,23 +507,6 @@ body{background:#f5f7fc}
   #android-observable .right-shell input:not([type=checkbox]):not([type=radio]),#android-observable .right-shell textarea,#android-observable .right-shell select{font-size:13px}
 }
 
-/* 应用抽屉：导航栏一键打开的应用列表，盖在工作区上方，不挤压布局。 */
-#android-observable .app-drawer{position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(15,23,42,.38)}
-#android-observable .app-drawer[hidden]{display:none}
-#android-observable .app-drawer-sheet{width:min(520px,100%);max-height:min(560px,calc(100dvh - 48px));display:grid;grid-template-rows:auto auto minmax(120px,1fr) auto;gap:8px;padding:12px;border:1px solid var(--as-line);border-radius:10px;background:var(--as-panel);color:var(--as-text);box-shadow:0 18px 60px rgba(15,23,42,.28);box-sizing:border-box}
-#android-observable .app-drawer-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
-#android-observable .app-drawer-head h2{margin:0;font-size:15px;font-weight:500}
-#android-observable .app-drawer-close{font-size:11px;min-height:24px;padding:2px 8px}
-#android-observable .app-drawer-filter{width:100%;height:30px;box-sizing:border-box}
-#android-observable .app-drawer-list{list-style:none;margin:0;padding:0;overflow:auto;min-height:0;overscroll-behavior:contain}
-#android-observable .app-drawer-row button{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:auto auto;gap:0 8px;width:100%;padding:6px 4px;border:0;border-bottom:1px solid var(--as-line);background:none;color:inherit;font:inherit;text-align:left;cursor:pointer}
-#android-observable .app-drawer-row button:hover{background:var(--as-soft)}
-#android-observable .app-drawer-row button:disabled{cursor:default;opacity:.55}
-#android-observable .app-drawer-name{grid-column:1;grid-row:1;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
-#android-observable .app-drawer-meta{grid-column:1;grid-row:2;font-size:10px;color:var(--as-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
-#android-observable .app-drawer-open{grid-column:2;grid-row:1 / 3;align-self:center;font-size:11px;color:var(--as-accent)}
-#android-observable .app-drawer-status{margin:0;min-height:14px;font-size:11px;color:var(--as-dim)}
-#android-observable .app-drawer-toggle[aria-expanded=true]{color:var(--as-accent)}
 
 /* 应用面板展开时给出真正能看几行的高度；收起时仍只占一行标题。 */
 @media (min-width:901px) and (min-height:721px){
