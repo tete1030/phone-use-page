@@ -27,11 +27,11 @@ export function installApplications(root:HTMLElement,options:{api:(path:string)=
     const search=query.trim().toLowerCase(),match=(value:string)=>!search||value.toLowerCase().includes(search);
     for(const mode of modes){
       const list=lists[mode]!,rows=columns.get(mode)!;
-      const items:{key:string;name:string;meta:string;actions:{name:string;available:boolean;path:string;data:any}[]}[]=[];
+      const items:{key:string;name:string;meta:string;actions:{name:string;available:boolean;path:string;data:any;reason?:string}[]}[]=[];
       if(mode==='tasks')for(const t of nav.tasks){if(!match(t.taskId+' '+t.packageName+' '+t.topComponent))continue;
         items.push({key:'task:'+t.userId+':'+t.taskId,name:`#${t.taskId} · ${t.packageName||'未知包'}${t.foreground?' · 前台':''}${t.type==='home'?' · 桌面':''}`,
-          meta:`顶部：${t.topComponent||'无 Activity，仅近期记录'} · ${t.activities.length} 个系统 Activity`,
-          actions:[{name:`切换任务 #${t.taskId} ${t.packageName}`,available:t.switchable&&!t.foreground,path:'/api/android-tasks/switch',data:{taskId:t.taskId,fingerprint:t.fingerprint}}]});
+          meta:`顶部：${t.topComponent||'无 Activity，仅近期记录'} · ${t.activities.length} 个系统 Activity${t.foreground?' · 已在前台，无需切换':!t.switchable?' · 该任务不可切换':''}`,
+          actions:[{name:`切换任务 #${t.taskId} ${t.packageName}`,available:t.switchable&&!t.foreground,path:'/api/android-tasks/switch',data:{taskId:t.taskId,fingerprint:t.fingerprint},reason:t.foreground?'已是前台，无需切换':!t.switchable?'该任务当前不可切换':''}]});
       }
       else if(mode==='apps')for(const a of state.catalog.apps){if(!allPackages&&!a.launchers.length||!match(a.packageName+' '+a.launchers.join(' ')))continue;
         items.push({key:'app:'+a.packageName,name:a.packageName,meta:`${a.thirdParty?'第三方包':'系统包'} · ${a.launchers.length?a.launchers.length+' 个启动入口':'无桌面启动入口'}`,
@@ -47,7 +47,7 @@ export function installApplications(root:HTMLElement,options:{api:(path:string)=
         const existing=Array.from(row.actions.querySelectorAll<HTMLButtonElement>('button'));
         for(const [j,itemAction]of item.actions.entries()){let button=existing[j];if(!button){button=document.createElement('button');button.type='button';button.dataset.appAction='1';button.addEventListener('click',()=>void action(button!.dataset.path!,JSON.parse(button!.dataset.body!)));row.actions.append(button);}
           const caption=itemAction.path.endsWith('/switch')?'切换 #'+itemAction.data.taskId:item.actions.length>1&&itemAction.data.component?'打开 '+itemAction.data.component.split('/')[1]:'打开';
-          assign(button,caption);button.setAttribute('aria-label',itemAction.name);button.dataset.path=itemAction.path;button.dataset.body=JSON.stringify(itemAction.data);button.dataset.available=String(itemAction.available);}
+          assign(button,caption);button.setAttribute('aria-label',itemAction.name);button.title=itemAction.available?'':itemAction.reason||'当前不可用';button.dataset.path=itemAction.path;button.dataset.body=JSON.stringify(itemAction.data);button.dataset.available=String(itemAction.available);}
         for(const button of existing.slice(item.actions.length))button.remove();
         if(list.children[index]!==row.li)list.insertBefore(row.li,list.children[index]||null);
       }

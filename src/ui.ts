@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import type { Observation,AndroidNode } from './types.js';
-import {escape,label,nodeValue,shortId,shownNodes} from './presentation.js';
+import {escape,label,clickHint,nodeValue,shortId,shownNodes} from './presentation.js';
 let template: string;
 export async function readAssetVersion(){
   const value=JSON.parse(await readFile('dist/web/assets.json','utf8'));
@@ -10,7 +10,7 @@ export async function readAssetVersion(){
 function treeHTML(nodes:AndroidNode[]) {
   const display=shownNodes(nodes,'compact','');const visible=new Set(display.map(n=>n.id));const children=new Map<string|null,AndroidNode[]>();
   for(const n of display){let p=n.parentId;if(p&&!visible.has(p))p=null;const list=children.get(p)||[];list.push(n);children.set(p,list);}
-  const rows=(parent:string|null):string=>(children.get(parent)||[]).map(n=>`<li data-node-id="${escape(n.id)}"><button type="button" class="node-button" data-node-id="${escape(n.id)}"><span class="node-code">${shortId(n,nodes)} </span><span class="node-branch" aria-hidden="true" style="margin-left:${Math.min(n.depth,8)*10}px">↳</span><span class="node-label">${escape(label(n,nodes))}</span><span class="node-value"> ${escape(nodeValue(n))}</span></button>${children.has(n.id)?'<ul>'+rows(n.id)+'</ul>':''}</li>`).join('');
+  const rows=(parent:string|null):string=>(children.get(parent)||[]).map(n=>`<li data-node-id="${escape(n.id)}"><button type="button" class="node-button" data-node-id="${escape(n.id)}"><span class="node-code">${shortId(n,nodes)} </span><span class="node-branch" aria-hidden="true" style="margin-left:${Math.min(n.depth,8)*10}px">↳</span><span class="node-label">${escape(label(n,nodes))}</span><span class="node-value"> ${escape(nodeValue(n,clickHint(n)))}</span></button>${children.has(n.id)?'<ul>'+rows(n.id)+'</ul>':''}</li>`).join('');
   return rows(null);
 }
 export async function render(state:Observation,boot:any) {

@@ -6,7 +6,14 @@ export function label(n:AndroidNode,nodes:AndroidNode[]) {
   return n.resourceId.split('/').pop()||n.className.split('.').pop()||'未命名节点';
 }
 export function shortId(n:AndroidNode,nodes:AndroidNode[]) {let length=6;while(length<16&&nodes.some(x=>x.id!==n.id&&x.id.startsWith(n.id.slice(0,length))))length++;return 'n'+n.id.slice(0,length);}
-export function nodeValue(n:AndroidNode){return [n.password?'密码（不回读）':'',n.checkable?(n.checked?'开启':'关闭'):'',!n.enabled?'不可用':'',n.editable?'可编辑':'',n.editable&&!n.password&&n.text?'文本：'+n.text:'',n.focused?'手机焦点':'',n.scrollable?'可滚动':''].filter(Boolean).join(' · ');}
+export function nodeValue(n:AndroidNode,clickHint?:''|'可点击'|'不可直接点击'){return [clickHint||'',n.password?'密码（不回读）':'',n.checkable?(n.checked?'开启':'关闭'):'',!n.enabled?'不可用':'',n.editable?'可编辑':'',n.editable&&!n.password&&n.text?'文本：'+n.text:'',n.focused?'手机焦点':'',n.scrollable?'可滚动':''].filter(Boolean).join(' · ');}
+// 行内提示：点击会落在节点自身还是祖先，读屏与浏览器 Agent 只看这一行就能判断能不能点。
+export function clickHint(n:AndroidNode):''|'可点击'|'不可直接点击'{
+  if(!n.enabled||!n.visible)return '';
+  if(n.clickable)return '可点击';
+  if(n.editable||n.checkable||!n.text&&!n.description)return '';
+  return '不可直接点击';
+}
 export function taskResultPreview(value:unknown){
   if(value==null)return '';
   if(typeof value==='object'&&!Array.isArray(value)){
@@ -26,7 +33,7 @@ export function shownNodes(nodes:AndroidNode[],mode:string,query:string) {
     return true;
   });
   if(mode==='actionable')base=nodes.filter(n=>n.clickable||n.editable||n.checkable||n.longClickable||n.scrollable);
-  if(query.trim()){const text=query.trim().toLowerCase();base=nodes.filter(n=>[n.id,'n'+n.id,n.text,n.description,n.resourceId,n.className,n.package,label(n,nodes),nodeValue(n)].join(' ').toLowerCase().includes(text));}
+  if(query.trim()){const text=query.trim().toLowerCase();base=nodes.filter(n=>[n.id,'n'+n.id,n.text,n.description,n.resourceId,n.className,n.package,label(n,nodes),nodeValue(n,clickHint(n))].join(' ').toLowerCase().includes(text));}
   // Retain a minimal ancestor chain so filtered nodes do not acquire false parents.
   const include=new Set(base.map(n=>n.id));for(const n of base){let p=n.parentId;while(p&&byId.has(p)){include.add(p);p=byId.get(p)!.parentId;}}
   return nodes.filter(n=>include.has(n.id));

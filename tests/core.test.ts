@@ -57,6 +57,13 @@ test('a cancelled swipe lifts at the last emitted point, not the destination',as
   assert.notDeepEqual([up.x,up.y],[79.2,79.2]);
 });
 test('node click samples one point and scales it once for both DOWN and UP',async t=>{t.mock.method(Math,'random',()=>0);const f=clickFixture();const result=await f.d.nodeAction('owner',f.target,'click');assert.deepEqual(result.point,{x:45,y:45});assert.equal(result.jitter,true);assert.equal(result.verification,'not_verified');assert.deepEqual(f.touches,[{action:0,x:36,y:36},{action:1,x:36,y:36}]);f.touches.length=0;const fixed=await f.d.nodeAction('owner',f.target,'click',undefined,undefined,{jitter:false});assert.deepEqual(fixed.point,{x:50,y:50});assert.deepEqual(f.touches,[{action:0,x:40,y:40},{action:1,x:40,y:40}]);});
+test('node action receipts report elapsed time and whether the observed UI changed',async()=>{
+  const quiet=clickFixture();const same=await quiet.d.nodeAction('owner',quiet.target,'click');
+  assert.equal(same.changed,false);assert.equal(typeof same.elapsedMs,'number');assert.ok(same.elapsedMs>=0);
+  const moved=clickFixture();let captures=0;moved.d.collect=async()=>{if(++captures>1)moved.d.state.snapshotId='ui-'+captures;return moved.d.state;};
+  const changed=await moved.d.nodeAction('owner',moved.target,'click');
+  assert.equal(changed.changed,true);assert.equal(changed.snapshotId,'ui-2');
+});
 test('long press keeps one jittered point for DOWN and UP',async t=>{t.mock.method(Math,'random',()=>.999999);const f=clickFixture({longClickable:true});f.d.video.touch=async(action,id,x,y)=>{f.touches.push({action,x,y});};const result=await f.d.nodeAction('owner',f.target,'longPress',400);assert.deepEqual(result.point,{x:55,y:55});assert.deepEqual(f.touches,[{action:0,x:44,y:44},{action:1,x:44,y:44}]);});
 test('a satisfied toggle sends no touch and changed toggles still require readback',async()=>{const f=clickFixture({checkable:true,checked:true});const noop=await f.d.nodeAction('owner',f.target,'setChecked',true);assert.equal(noop.point,undefined);assert.equal(f.touches.length,0);await assert.rejects(f.d.nodeAction('owner',f.target,'setChecked',false),/开关状态未达到/);assert.equal(f.touches.length,2);});
 test('stale targets are rejected with jitter enabled and coordinate taps remain exact',async()=>{const f=clickFixture();await assert.rejects(f.d.nodeAction('owner',{...f.target,fingerprint:'stale'},'click'),/所选节点已变化/);assert.equal(f.touches.length,0);await f.d.gesture('owner','tap',{x:25,y:75});assert.deepEqual(f.touches,[{action:0,x:20,y:60},{action:1,x:20,y:60}]);});

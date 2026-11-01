@@ -18,7 +18,7 @@ export interface Observation {
   uiError: string | null; videoError: string | null; controlAvailable: boolean;
 }
 export interface Target { id: string; fingerprint: string; snapshotId?: string; windowId?:string }
-export interface ActionResult { execution?:'sent';verification?:'verified'|'not_verified'|'inconclusive'|'failed';requestId: string; status: 'ok'; backend: string; snapshotId: string; result?: unknown; jitter?:boolean; point?:{x:number;y:number};sourceTarget?:string;actionTarget?:string }
+export interface ActionResult { execution?:'sent';verification?:'verified'|'not_verified'|'inconclusive'|'failed';requestId: string; status: 'ok'; backend: string; snapshotId: string; result?: unknown; jitter?:boolean; point?:{x:number;y:number};sourceTarget?:string;actionTarget?:string;changed?:boolean;elapsedMs?:number;foregroundApp?:string }
 export interface Selector { text?: string; resourceId?: string; description?: string; className?: string; package?: string }
 export interface AppEntry {packageName:string;thirdParty:boolean;launchers:string[]}
 export interface ActivityEntry {index:number;token:string;userId:number;component:string;state:string}

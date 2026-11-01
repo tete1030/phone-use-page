@@ -5,6 +5,7 @@ import { Video } from './video.js';
 import { ConsoleError, type AndroidNode, type Observation, type Selector, type Target, type ActionResult, type ApplicationState, type Navigation } from './types.js';
 import {nodeTouchPoint,resolveClickOptions,type ClickOptions} from './click-options.js';
 import {resolveNodeClick,nodeClickPointClear} from './node-click.js';
+import {label,shortId} from './presentation.js';
 import {planGesture,type GestureKind,type GestureSpec,type Realism} from './gesture-plan.js';
 import {chooseBackend,frameworkArgv,unsupportedReason,UNPROBED,type DeviceCapabilities,type ResolvedBackend} from './gesture-backend.js';
 
@@ -67,7 +68,7 @@ export class Device extends EventEmitter {
   assertScreen(){if(!this.state.screenOn)throw new ConsoleError('SCREEN_OFF','屏幕已关闭，请点击手机画面亮屏',409);if(this.state.locked!==false)throw new ConsoleError('DEVICE_LOCKED',this.state.locked?'手机已锁屏，请在手机上解锁':'手机解锁状态未知，请稍后重试',409);}
   async ensureInteractive(){if(!this.state.powerCollectedAt||Date.now()-this.state.powerCollectedAt>1500)await this.refreshPower();this.assertScreen();}
   async wake(session:string,task?:string){return this.enqueue(session,async()=>{await this.video.start();this.claim(session,task);await this.video.press(keyCodes.WAKEUP!);await this.bridge.call('unlock',{},15000,()=>this.claim(session,task));for(let i=0;i<8;i++){await pause(150);this.claim(session,task);await this.refreshPower();if(this.state.screenOn&&this.state.locked===false)break;}return {status:this.state.screenOn&&this.state.locked===false?'ok':'unlock_required',execution:'sent',verification:this.state.screenOn&&this.state.locked===false?'verified':'failed',screenOn:this.state.screenOn,locked:this.state.locked};},task);}
-  async press(session:string,code:number,meta=0,task?:string){if(code===keyCodes.WAKEUP)return this.wake(session,task);return this.enqueue(session,async()=>{await this.ensureInteractive();this.claim(session,task);if(code===keyCodes.PASTE){await this.collect();if(!this.state.focus)throw new ConsoleError('NO_EDITABLE_FOCUS','粘贴前需确认手机文本焦点',409);}await this.video.press(code,meta);await this.afterApplicationAction();return {status:'ok',execution:'sent',verification:'not_verified',snapshotId:this.state.snapshotId};},task);}
+  async press(session:string,code:number,meta=0,task?:string){if(code===keyCodes.WAKEUP)return this.wake(session,task);return this.enqueue(session,async()=>{const startedAt=Date.now(),beforeSnapshot=this.state.snapshotId,beforeForeground=this.state.foregroundApp;await this.ensureInteractive();this.claim(session,task);if(code===keyCodes.PASTE){await this.collect();if(!this.state.focus)throw new ConsoleError('NO_EDITABLE_FOCUS','粘贴前需确认手机文本焦点',409);}await this.video.press(code,meta);await this.afterApplicationAction();return {status:'ok',execution:'sent',verification:'not_verified',snapshotId:this.state.snapshotId,changed:this.state.snapshotId!==beforeSnapshot||this.state.foregroundApp!==beforeForeground,elapsedMs:Date.now()-startedAt,foregroundApp:this.state.foregroundApp};},task);}
   async start() {
     try{await this.setKeepAwake(false);Object.assign(this.state,await this.bridge.call('info'));await this.refreshPower();await this.collect();}catch(error){this.state.uiError=String(error);}
 
@@ -133,7 +134,7 @@ export class Device extends EventEmitter {
     if(Object.keys(selector).some(k=>!allowed.includes(k)))throw new ConsoleError('INVALID_SELECTOR','不支持的选择器字段');
     const matches=this.state.nodes.filter(n=>Object.entries(selector).every(([k,v])=>n[k as keyof AndroidNode]===v));
     if(!matches.length)throw new ConsoleError('TARGET_NOT_FOUND','未找到匹配节点',404);
-    if(matches.length!==1)throw new ConsoleError('AMBIGUOUS_TARGET','匹配到多个节点，请补充 resourceId 或 className',409);
+    if(matches.length!==1){const sample=matches.slice(0,3).map(n=>`${shortId(n,this.state.nodes)} ${label(n,this.state.nodes)}`).join(' / ');throw new ConsoleError('AMBIGUOUS_TARGET',`匹配到多个节点（共 ${matches.length} 个：${sample}），请补充 resourceId 或 className`,409);}
     return matches[0]!;
   }
   private coordinates(x:number,y:number) {
@@ -151,9 +152,11 @@ export class Device extends EventEmitter {
   async nodeAction(session:string,target:Target|null,action:string,value?:unknown,task?:string,clickOptions?:ClickOptions,selector?:Selector) {
     const options=resolveClickOptions(clickOptions);
     return this.enqueue(session,async()=>{
+      const startedAt=Date.now();
       await this.ensureInteractive();
       let n:AndroidNode;
       if(target)n=await this.target(target);else{await this.collect({fresh:true});n=this.find(selector!);if(!n.enabled||!n.visible)throw new ConsoleError('UNAVAILABLE_TARGET','目标不可用或不在有效屏幕区域',409);}
+      const beforeSnapshot=this.state.snapshotId,beforeForeground=this.state.foregroundApp;
       let textVerification:ActionResult['verification'];let point:{x:number;y:number}|undefined,actionTarget:AndroidNode|undefined;
       // realism:'off' keeps the old fixed 60 ms press; otherwise the hold
       // comes from the measured 70-108 ms distribution.
@@ -184,7 +187,7 @@ export class Device extends EventEmitter {
         error.execution='sent';error.verification=textVerification;throw error;
       }
       if(action==='setChecked'){const current=this.state.nodes.find(x=>x.id===n.id);if(this.state.uiError||!current||current.checked!==value){const error=new ConsoleError(this.state.uiError?'VERIFY_RESULT_UNKNOWN':'VERIFY_FAILED',this.state.uiError?'无法读取开关结果，请先观察手机':'开关状态未达到期望值，请观察手机',409);if(point)error.execution='sent';error.verification=this.state.uiError?'inconclusive':'failed';throw error;}}
-      return {requestId:randomUUID(),status:'ok',execution:'sent',verification:action==='setText'?textVerification:action==='setChecked'?'verified':action==='focus'&&this.state.focus?.id===n.id?'verified':'not_verified',backend:action==='setText'?'uiautomator2.setText':action==='focus'?'uiautomator2.focus':'scrcpy-coordinate-compatibility',...(point?{jitter:options.jitter,point}:{}),...(actionTarget?{sourceTarget:n.id,actionTarget:actionTarget.id}:{}),snapshotId:this.state.snapshotId,uiError:this.state.uiError};
+      return {requestId:randomUUID(),status:'ok',execution:'sent',verification:action==='setText'?textVerification:action==='setChecked'?'verified':action==='focus'&&this.state.focus?.id===n.id?'verified':'not_verified',backend:action==='setText'?'uiautomator2.setText':action==='focus'?'uiautomator2.focus':'scrcpy-coordinate-compatibility',...(point?{jitter:options.jitter,point}:{}),...(actionTarget?{sourceTarget:n.id,actionTarget:actionTarget.id}:{}),snapshotId:this.state.snapshotId,uiError:this.state.uiError,changed:this.state.snapshotId!==beforeSnapshot||this.state.foregroundApp!==beforeForeground,elapsedMs:Date.now()-startedAt,foregroundApp:this.state.foregroundApp};
     },task);
   }
   async panel(session:string,kind:'notifications'|'settings',task?:string){return this.enqueue(session,async()=>{await this.ensureInteractive();await this.video.panel(kind);await this.afterApplicationAction();return {execution:'sent',verification:'not_verified',snapshotId:this.state.snapshotId};},task);}

@@ -154,7 +154,7 @@ def text_object(selector, instance=0, bounds=None, strict_bounds=True):
     obj = connect()(**selector)
     count = getattr(obj, 'count', 1)
     if count > 40:
-        raise AppStateError('AMBIGUOUS_TARGET', 'Too many matching text targets')
+        raise AppStateError('AMBIGUOUS_TARGET', f'Too many matching text targets ({count}); add resourceId or className, or tap the coordinates from the node bounds')
     candidates = [obj] if count == 1 else [connect()(**dict(selector, instance=i)) for i in range(count)]
     matches = []
     for candidate in candidates:
@@ -164,7 +164,10 @@ def text_object(selector, instance=0, bounds=None, strict_bounds=True):
         if bounds is None or (count == 1 and not strict_bounds) or actual == bounds:
             matches.append((candidate, info, actual))
     if len(matches) != 1:
-        raise AppStateError('AMBIGUOUS_TARGET' if matches else 'FOCUS_CHANGED', 'Cannot uniquely confirm the text target')
+        if matches:
+            shown = [f"{m[1].get('className', '').rsplit('.', 1)[-1]}{m[2]}" for m in matches[:3]]
+            raise AppStateError('AMBIGUOUS_TARGET', f'Cannot uniquely confirm the text target ({len(matches)} matches: {", ".join(shown)}); re-read the tree and retry')
+        raise AppStateError('FOCUS_CHANGED', 'The remembered target bounds no longer match; re-read the tree before acting')
     return matches[0]
 
 

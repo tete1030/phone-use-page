@@ -89,6 +89,8 @@ body{background:#f5f7fc}
 #android-observable .detail-actions {display:flex;gap:4px;align-items:center;}
 #android-observable .detail-actions button {font-size:12px;min-height:22px;padding:1px 6px;}
 #android-observable .detail-properties {font:11px/1.5 'IBM Plex Mono',monospace;color:var(--as-dim);overflow-wrap:anywhere;}
+#android-observable .detail-status {font-size:11px;line-height:1.5;color:var(--as-dim);overflow-wrap:anywhere;}
+#android-observable .node-footer .agent-status {font-family:'IBM Plex Mono',monospace;}
 #android-observable .node-footer {display:flex;align-items:center;justify-content:space-between;padding:0 7px;border-top:1px solid var(--as-line);font-size:11px;color:var(--as-dim);}
 #android-observable .commands {grid-area:commands;display:grid;grid-template-rows:164px 254px 184px 76px minmax(0,1fr);gap:8px;min-height:0;}
 #android-observable .command {background:var(--as-panel);border:1px solid var(--as-line);min-height:0;min-width:0;}
