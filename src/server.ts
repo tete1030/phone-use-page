@@ -14,6 +14,7 @@ import { observationView,projectObservation,renderObservationText } from './obse
 import { Tasks } from './tasks.js';
 import { ConsoleError } from './types.js';
 import { render,readAssetVersion } from './ui.js';
+import { renderTaskPage } from './task-page.js';
 import { apiMethods,SDK_VERSION } from './sdk.js';
 import { PageConnections,RECOVERY_GRACE_MS,type PageConnection } from './page-connections.js';
 import {TouchControl} from './touch-control.js';
@@ -121,7 +122,7 @@ app.post(endpoint('/api/navigation/back'),async req=>{const s=session(req,true);
 app.get(endpoint('/api/tasks'),req=>{const s=session(req);return tasks.latest().map(t=>publicTask(t,s.owner));});
 app.post(endpoint('/api/tasks'),async req=>{const s=session(req,true);const p=z.object({code:z.string().max(32768),check:z.boolean().optional(),clickOptions:clickOptionsSchema.optional()}).parse(req.body);pages.activity(s.owner);return publicTask(await tasks.start(p.code,s.owner,p.check,p.clickOptions),s.owner);});
 app.post(endpoint('/api/tasks/:id/stop'),async req=>{const s=session(req,true);return publicTask(tasks.stop((req.params as any).id,s.owner),s.owner);});
-app.get(endpoint('/tasks/:id'),async(req,reply)=>{const s=session(req);const t=tasks.records.get((req.params as any).id);if(!t)throw new ConsoleError('TASK_NOT_FOUND','任务不存在',404);return reply.type('text/html').send('<!doctype html><meta charset="utf-8"><title>脚本任务结果</title><a href="'+endpoint('/')+'">返回控制台</a><pre>'+escape(JSON.stringify(publicTask(t,s.owner),null,2))+'</pre>');});
+app.get(endpoint('/tasks/:id'),async(req,reply)=>{const s=session(req);const t=tasks.records.get((req.params as any).id);if(!t)throw new ConsoleError('TASK_NOT_FOUND','任务不存在',404);return reply.type('text/html; charset=utf-8').send(renderTaskPage(publicTask(t,s.owner),{backHref:endpoint('/')}));});
 // 文字观察页：给文字与 LLM Agent 读的同一份界面。默认只列可操作行并按行写成文本，
 // 完整 JSON 仍可用 ?view=full&format=json 取回。
 app.get(endpoint('/observe'),async(req,reply)=>{

@@ -92,6 +92,7 @@ try {
         }
       }
       if(path==='/api/node/text'){window.__reads.push(JSON.parse(options.body));data={text:window.__phoneText};}
+      if(path==='/api/node'&&window.__clickResult&&JSON.parse(options.body).action==='click')data=window.__clickResult;
       if(path==='/api/tasks'){window.__taskRequests.push(JSON.parse(options.body));data={id:'fixture-script',startedAt:Date.now(),status:'completed',steps:0,logs:[],result:null};}
       if(path==='/api/connection/connect')data={connectionId:'fixture',generation:0};
       if(path==='/api/connection/resume')data={connectionId:'fixture',generation:(window.__resumeGeneration=(window.__resumeGeneration||0)+1)};
@@ -138,6 +139,15 @@ try {
   await page.evaluate(()=>{const id=window.__state.nodes[0].id;window.__observe({...window.__state,nodes:window.__state.nodes.map(n=>n.id===id?{...n,resourceId:'fixture:id/other',fingerprint:'renamed'}:n)});});
   assert.equal(await page.locator('.inspect-click').isDisabled(),true,'changed identity is still rejected');
   assert.match(await page.locator('.detail-status').textContent(),/目标已变化/);
+  // A2：动作回执直接说清界面变了什么
+  await page.evaluate(()=>{window.__observe(window.__original);window.__clickResult={execution:'sent',verification:'not_verified',changed:true,changes:{foreground:{from:'fixture',to:'settings'},focus:{from:null,to:{id:'field1',label:'搜索'}},rows:{total:3,added:1,removed:0,changed:1}}};});
+  await page.locator('.node-button').first().click();await page.locator('.inspect-click').click();
+  await page.waitForFunction(()=>document.querySelector('.results').textContent.includes('新增 1'));
+  const receipt=await page.locator('.results').innerText();
+  assert.ok(receipt.includes('前台 fixture→settings'),receipt.slice(0,300));
+  assert.ok(receipt.includes('焦点 无→搜索'),receipt.slice(0,300));
+  assert.ok(receipt.includes('新增 1 · 消失 0 · 变化 1 行'),receipt.slice(0,300));
+  await page.evaluate(()=>{window.__clickResult=null;});
   await page.evaluate(()=>{const leaf={...window.__state.nodes[0],id:'label',parentId:'row',text:'WLAN',description:'',editable:false,focused:false,clickable:false,bounds:[100,200,250,260]};const row={...leaf,id:'row',parentId:null,clickable:true,text:'',resourceId:'fixture:id/row',bounds:[50,150,900,350]};window.__observe({...window.__state,nodes:[row,leaf],focus:null});});
   await page.locator('[data-filter="full"]').click();assert.ok((await page.locator('[data-node-id="label"] > .node-button > .node-value').textContent()).includes('不可直接点击'));assert.ok((await page.locator('[data-node-id="row"] > .node-button > .node-value').textContent()).includes('可点击'));await page.locator('[data-node-id="label"] > .node-button').click();assert.equal(await page.locator('.inspect-click').textContent(),'在手机上点击');assert.match(await page.locator('.detail-status').textContent(),/祖先行 nrow/);await page.locator('.inspect-click').click();
   await page.waitForFunction(()=>window.__nodeActions.at(-1)?.target.id==='label');assert.equal(await page.evaluate(()=>window.__nodeActions.at(-1).target.id),'label');await page.evaluate(()=>{window.__nodeActions=[];window.__observe(window.__original);});await page.locator('[data-filter="compact"]').click();

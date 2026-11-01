@@ -16,6 +16,7 @@ import {shownNodes,escape} from '../src/presentation.js';
 import {nodeTouchPoint,resolveClickOptions} from '../src/click-options.js';
 import {ConsoleError,type AndroidNode,type Navigation,type ApplicationState} from '../src/types.js';
 import {projectObservation,renderObservationText,observationView} from '../src/observation-view.js';
+import {renderTaskPage} from '../src/task-page.js';
 
 const node=(patch:Partial<AndroidNode>={}):AndroidNode=>({id:'node',parentId:null,depth:0,index:0,text:'按钮',description:'',resourceId:'pkg:id/button',className:'android.widget.Button',package:'pkg',bounds:[0,0,100,100],enabled:true,clickable:true,longClickable:false,checkable:false,checked:false,focused:false,editable:false,password:false,scrollable:false,visible:true,fingerprint:'original',selector:{},instance:0,...patch});
 test('click jitter defaults on, respects false and rejects obsolete mode options',()=>{assert.deepEqual(resolveClickOptions(undefined),{jitter:true,realism:'auto'});assert.deepEqual(resolveClickOptions({},{jitter:false,realism:'auto'}),{jitter:false,realism:'auto'});assert.deepEqual(resolveClickOptions({jitter:false}),{jitter:false,realism:'auto'});for(const value of [null,[],{mode:'touch'},{jitter:'yes'},{pressure:1},{realism:'sometimes'}])assert.throws(()=>resolveClickOptions(value),/点击选项/);});
@@ -72,6 +73,12 @@ test('JS node options override a captured task default without changing that def
 test('compact view retains independently actionable child toggles',()=>{const nodes=[node(),node({id:'toggle',parentId:'node',depth:1,text:'按钮',checkable:true})];assert.equal(shownNodes(nodes,'compact','').length,2);});
 test('search retains ancestor context instead of reparenting to unrelated nodes',()=>{const nodes=[node({id:'root',clickable:false}),node({id:'parent',parentId:'root',depth:1}),node({id:'child',parentId:'parent',depth:2,text:'查找对象'})];assert.deepEqual(shownNodes(nodes,'full','查找对象').map(n=>n.id),['root','parent','child']);});
 test('phone text cannot inject HTML into server-rendered observation',()=>assert.equal(escape('<script>"&</script>'),'&lt;script&gt;&quot;&amp;&lt;/script&gt;'));
+test('action receipts summarize what changed on screen',async()=>{
+  const f=clickFixture();f.d.state.foregroundApp='pkg';
+  f.d.video.touch=async(action:number)=>{if(action===1){f.d.state.nodes=[node({fingerprint:'fp2'}),node({id:'fresh',text:'新行'})];f.d.state.foregroundApp='settings';}};
+  const receipt=await f.d.nodeAction('owner',f.target,'click');
+  assert.deepEqual(receipt.changes,{foreground:{from:'pkg',to:'settings'},focus:{from:null,to:null},rows:{total:2,added:1,removed:0,changed:1}});
+});
 test('a reflowed list keeps its target when the content is unchanged',async()=>{
   const d=new Device('test','unused','unused');
   d.state.nodes=[node({fingerprint:'moved',bounds:[0,140,100,240]})];d.state.windowId='w1';d.collect=async()=>d.state;
@@ -83,6 +90,17 @@ test('a reflowed list keeps its target when the content is unchanged',async()=>{
   await assert.rejects(d.target({id:'node',fingerprint:'original',windowId:'w1'}),/所选节点已变化/,'without the caller content a moved fingerprint stays stale');
 });
 test('stale signatures are rejected before an input is sent',async()=>{const d=new Device('test','unused','unused');d.state.nodes=[node({fingerprint:'changed'})];d.collect=async()=>d.state;await assert.rejects(d.target({id:'node',fingerprint:'original'}),/所选节点已变化/);});
+test('a task page reads as text and keeps the raw record behind a toggle',()=>{
+  const html=renderTaskPage({id:'t-1',status:'completed',startedAt:1000,finishedAt:3500,steps:3,logs:['点击 设置 · 已发送','<script>alert(1)</script>'],result:{ok:1},error:undefined,owner:'o',code:'return 1;'},{backHref:'/'});
+  assert.match(html,/脚本任务 · 已完成/);assert.match(html,/3 步 · 2\.5 秒 · t-1/);
+  assert.ok(html.includes('点击 设置 · 已发送'));assert.ok(!html.includes('<script>alert'),'logs are escaped');
+  assert.ok(html.includes('<h2>返回</h2><pre>{&quot;ok&quot;:1}</pre>'),'the result preview is readable');
+  assert.ok(html.includes('<details><summary>原始记录（JSON）</summary>'));
+});
+test('a failed task page shows its error',()=>{
+  const html=renderTaskPage({id:'t-2',status:'failed',startedAt:0,finishedAt:0,steps:0,logs:[],error:'任务失败：未找到节点'},{backHref:'/'});
+  assert.match(html,/脚本任务 · 失败/);assert.match(html,/<p class="error">任务失败：未找到节点<\/p>/);
+});
 test('ambiguous selectors fail rather than selecting the first duplicate',()=>{const d=new Device('test','unused','unused');d.state.nodes=[node(),node({id:'second'})];assert.throws(()=>d.find({text:'按钮'}),/匹配到多个/);});
 test('cancelled task cannot reclaim device control',()=>{const d=new Device('test','unused','unused');d.activeTask='new';assert.throws(()=>d.claim('session','old'),/任务已停止/);d.activeTask=undefined;assert.throws(()=>d.claim('session','old'),/任务已停止/);});
 test('one owner cannot steal another live lease',()=>{const d=new Device('test','unused','unused');d.claim('a');assert.throws(()=>d.claim('b'),/另一个浏览器/);});

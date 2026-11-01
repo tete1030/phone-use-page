@@ -19,7 +19,13 @@ export interface Observation {
 }
 export interface TargetContent { className:string; package:string; resourceId:string; text:string; description:string }
 export interface Target { id: string; fingerprint: string; snapshotId?: string; windowId?:string; content?:TargetContent }
-export interface ActionResult { execution?:'sent';verification?:'verified'|'not_verified'|'inconclusive'|'failed';requestId: string; status: 'ok'; backend: string; snapshotId: string; result?: unknown; jitter?:boolean; point?:{x:number;y:number};sourceTarget?:string;actionTarget?:string;changed?:boolean;elapsedMs?:number;foregroundApp?:string }
+export interface FocusSummary { id:string; label:string }
+export interface UiChange {
+  foreground:{from:string;to:string};
+  focus:{from:FocusSummary|null;to:FocusSummary|null};
+  rows:{total:number;added:number;removed:number;changed:number};
+}
+export interface ActionResult { execution?:'sent';verification?:'verified'|'not_verified'|'inconclusive'|'failed';requestId: string; status: 'ok'; backend: string; snapshotId: string; result?: unknown; jitter?:boolean; point?:{x:number;y:number};sourceTarget?:string;actionTarget?:string;changed?:boolean;elapsedMs?:number;foregroundApp?:string;changes?:UiChange }
 export interface Selector { text?: string; resourceId?: string; description?: string; className?: string; package?: string }
 export interface AppEntry {packageName:string;thirdParty:boolean;launchers:string[]}
 export interface ActivityEntry {index:number;token:string;userId:number;component:string;state:string}

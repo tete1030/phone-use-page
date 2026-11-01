@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events';
 import { createHash, randomUUID } from 'node:crypto';
 import { Bridge } from './bridge.js';
 import { Video } from './video.js';
-import { ConsoleError, type AndroidNode, type Observation, type Selector, type Target, type ActionResult, type ApplicationState, type Navigation } from './types.js';
+import { ConsoleError, type AndroidNode, type Observation, type Selector, type Target, type ActionResult, type ApplicationState, type Navigation, type UiChange, type FocusSummary } from './types.js';
 import {nodeTouchPoint,resolveClickOptions,type ClickOptions} from './click-options.js';
 import {resolveNodeClick,nodeClickPointClear} from './node-click.js';
 import {sameTargetContent} from './target-match.js';
@@ -74,7 +74,7 @@ export class Device extends EventEmitter {
   // is still trustworthy and an action does not pay for a redundant round trip.
   async ensureInteractive(){if(!this.state.powerCollectedAt||Date.now()-this.state.powerCollectedAt>3000)await this.refreshPower();this.assertScreen();}
   async wake(session:string,task?:string){return this.enqueue(session,async()=>{await this.video.start();this.claim(session,task);await this.video.press(keyCodes.WAKEUP!);await this.bridge.call('unlock',{},15000,()=>this.claim(session,task));for(let i=0;i<8;i++){await pause(150);this.claim(session,task);await this.refreshPower();if(this.state.screenOn&&this.state.locked===false)break;}return {status:this.state.screenOn&&this.state.locked===false?'ok':'unlock_required',execution:'sent',verification:this.state.screenOn&&this.state.locked===false?'verified':'failed',screenOn:this.state.screenOn,locked:this.state.locked};},task);}
-  async press(session:string,code:number,meta=0,task?:string){if(code===keyCodes.WAKEUP)return this.wake(session,task);return this.enqueue(session,async()=>{const startedAt=Date.now(),beforeSnapshot=this.state.snapshotId,beforeForeground=this.state.foregroundApp;await this.ensureInteractive();this.claim(session,task);if(code===keyCodes.PASTE){await this.collect();if(!this.state.focus)throw new ConsoleError('NO_EDITABLE_FOCUS','粘贴前需确认手机文本焦点',409);}await this.video.press(code,meta);await this.afterApplicationAction();return {status:'ok',execution:'sent',verification:'not_verified',snapshotId:this.state.snapshotId,changed:this.state.snapshotId!==beforeSnapshot||this.state.foregroundApp!==beforeForeground,elapsedMs:Date.now()-startedAt,foregroundApp:this.state.foregroundApp};},task);}
+  async press(session:string,code:number,meta=0,task?:string){if(code===keyCodes.WAKEUP)return this.wake(session,task);return this.enqueue(session,async()=>{const startedAt=Date.now(),beforeSnapshot=this.state.snapshotId,beforeForeground=this.state.foregroundApp;await this.ensureInteractive();this.claim(session,task);if(code===keyCodes.PASTE){await this.collect();if(!this.state.focus)throw new ConsoleError('NO_EDITABLE_FOCUS','粘贴前需确认手机文本焦点',409);}const beforeUi=this.uiStamp();await this.video.press(code,meta);await this.afterApplicationAction();return {status:'ok',execution:'sent',verification:'not_verified',snapshotId:this.state.snapshotId,changed:this.state.snapshotId!==beforeSnapshot||this.state.foregroundApp!==beforeForeground,elapsedMs:Date.now()-startedAt,foregroundApp:this.state.foregroundApp,changes:this.uiChange(beforeUi)};},task);}
   async start() {
     try{await this.setKeepAwake(false);Object.assign(this.state,await this.bridge.call('info'));await this.refreshPower();await this.collect();}catch(error){this.state.uiError=String(error);}
 
@@ -175,7 +175,7 @@ export class Device extends EventEmitter {
       await this.ensureInteractive();
       let n:AndroidNode;
       if(target)n=await this.target(target);else{await this.collect({fresh:true});n=this.find(selector!);if(!n.enabled||!n.visible)throw new ConsoleError('UNAVAILABLE_TARGET','目标不可用或不在有效屏幕区域',409);}
-      const beforeSnapshot=this.state.snapshotId,beforeForeground=this.state.foregroundApp;
+      const beforeSnapshot=this.state.snapshotId,beforeForeground=this.state.foregroundApp,beforeUi=this.uiStamp();
       let textVerification:ActionResult['verification'];let point:{x:number;y:number}|undefined,actionTarget:AndroidNode|undefined;
       // realism:'off' keeps the old fixed 60 ms press; otherwise the hold
       // comes from the measured 70-108 ms distribution.
@@ -206,10 +206,10 @@ export class Device extends EventEmitter {
         error.execution='sent';error.verification=textVerification;throw error;
       }
       if(action==='setChecked'){const current=this.state.nodes.find(x=>x.id===n.id);if(this.state.uiError||!current||current.checked!==value){const error=new ConsoleError(this.state.uiError?'VERIFY_RESULT_UNKNOWN':'VERIFY_FAILED',this.state.uiError?'无法读取开关结果，请先观察手机':'开关状态未达到期望值，请观察手机',409);if(point)error.execution='sent';error.verification=this.state.uiError?'inconclusive':'failed';throw error;}}
-      return {requestId:randomUUID(),status:'ok',execution:'sent',verification:action==='setText'?textVerification:action==='setChecked'?'verified':action==='focus'&&this.state.focus?.id===n.id?'verified':'not_verified',backend:action==='setText'?'uiautomator2.setText':action==='focus'?'uiautomator2.focus':'scrcpy-coordinate-compatibility',...(point?{jitter:options.jitter,point}:{}),...(actionTarget?{sourceTarget:n.id,actionTarget:actionTarget.id}:{}),snapshotId:this.state.snapshotId,uiError:this.state.uiError,changed:this.state.snapshotId!==beforeSnapshot||this.state.foregroundApp!==beforeForeground,elapsedMs:Date.now()-startedAt,foregroundApp:this.state.foregroundApp};
+      return {requestId:randomUUID(),status:'ok',execution:'sent',verification:action==='setText'?textVerification:action==='setChecked'?'verified':action==='focus'&&this.state.focus?.id===n.id?'verified':'not_verified',changes:this.uiChange(beforeUi),backend:action==='setText'?'uiautomator2.setText':action==='focus'?'uiautomator2.focus':'scrcpy-coordinate-compatibility',...(point?{jitter:options.jitter,point}:{}),...(actionTarget?{sourceTarget:n.id,actionTarget:actionTarget.id}:{}),snapshotId:this.state.snapshotId,uiError:this.state.uiError,changed:this.state.snapshotId!==beforeSnapshot||this.state.foregroundApp!==beforeForeground,elapsedMs:Date.now()-startedAt,foregroundApp:this.state.foregroundApp};
     },task);
   }
-  async panel(session:string,kind:'notifications'|'settings',task?:string){return this.enqueue(session,async()=>{await this.ensureInteractive();await this.video.panel(kind);await this.afterApplicationAction();return {execution:'sent',verification:'not_verified',snapshotId:this.state.snapshotId};},task);}
+  async panel(session:string,kind:'notifications'|'settings',task?:string){return this.enqueue(session,async()=>{await this.ensureInteractive();const beforeUi=this.uiStamp();await this.video.panel(kind);await this.afterApplicationAction();return {status:'ok',execution:'sent',verification:'not_verified',snapshotId:this.state.snapshotId,changes:this.uiChange(beforeUi)};},task);}
   async readText(session:string,target:Target){
     return this.enqueue(session,async()=>{
       await this.ensureInteractive();const n=await this.target(target);
@@ -225,8 +225,18 @@ export class Device extends EventEmitter {
   }
   navigation():Promise<Navigation>{return this.bridge.call('navigation');}
   private async afterApplicationAction(){this.applications=undefined;try{await this.collect({fresh:true});}catch{}}
+  /** What was on screen before an action, small enough to keep across the round trip. */
+  private uiStamp(){return {foreground:this.state.foregroundApp,focus:this.state.focus?{id:this.state.focus.id,label:label(this.state.focus,this.state.nodes)}:null,nodes:new Map(this.state.nodes.map(n=>[n.id,n.fingerprint] as [string,string]))};}
+  /** Row-level difference between that stamp and the state after the action. */
+  private uiChange(before:{foreground:string;focus:FocusSummary|null;nodes:Map<string,string>}):UiChange {
+    const after=new Map(this.state.nodes.map(n=>[n.id,n.fingerprint] as [string,string]));
+    let added=0,removed=0,changed=0;
+    for(const [id,fingerprint] of after){const was=before.nodes.get(id);if(was===undefined)added++;else if(was!==fingerprint)changed++;}
+    for(const id of before.nodes.keys())if(!after.has(id))removed++;
+    return {foreground:{from:before.foreground,to:this.state.foregroundApp},focus:{from:before.focus,to:this.state.focus?{id:this.state.focus.id,label:label(this.state.focus,this.state.nodes)}:null},rows:{total:after.size,added,removed,changed}};
+  }
   async openApp(session:string,packageName:string,component?:string,task?:string) {
-    return this.enqueue(session,async()=>{const result=await this.bridge.call('openApp',{packageName,component},15000,()=>this.claim(session,task));await this.afterApplicationAction();return {status:'ok',execution:'sent',verification:this.state.foregroundApp===packageName?'verified':'inconclusive',result,snapshotId:this.state.snapshotId,uiError:this.state.uiError};},task);
+    return this.enqueue(session,async()=>{const beforeUi=this.uiStamp();const result=await this.bridge.call('openApp',{packageName,component},15000,()=>this.claim(session,task));await this.afterApplicationAction();return {status:'ok',execution:'sent',verification:this.state.foregroundApp===packageName?'verified':'inconclusive',result,snapshotId:this.state.snapshotId,uiError:this.state.uiError,changes:this.uiChange(beforeUi)};},task);
   }
   async switchTask(session:string,taskId:number,fingerprint?:string,task?:string) {
     return this.enqueue(session,async()=>{
