@@ -34,7 +34,7 @@ try {
   await context.addInitScript((initial)=>{
     window.__state=initial;window.__messages=[];window.__phoneText='初始';window.__writes=[];window.__reads=[];window.__presses=[];window.__nodeActions=[];window.__taskRequests=[];
     window.__sockets=[];window.__videoErrors=[];
-    window.__offers=0;
+    window.__offers=0;window.__appsOpen=[];
     window.__observe=state=>{state={...state,collectedAt:Date.now(),captureSeq:(window.__state.captureSeq||0)+1,observationRevision:(window.__state.observationRevision||0)+1};window.__state=state;for(const socket of window.__sockets)if(socket.url.includes('/ws/events'))socket.onmessage?.({data:JSON.stringify({type:'observation',state,controlAllowed:true,taskBusy:false})});};
     setInterval(()=>{if(window.__powerPaused)return;if(!window.__pauseObservation)window.__observe(window.__state);for(const socket of window.__sockets)if(socket.url.includes('/ws/events'))socket.onmessage?.({data:JSON.stringify({type:'power',screenOn:window.__state.screenOn,locked:window.__state.locked,powerCollectedAt:Date.now()})});},1000);
     window.__clockOffset=0;
@@ -96,7 +96,8 @@ try {
       if(path==='/api/tasks'){window.__taskRequests.push(JSON.parse(options.body));data={id:'fixture-script',startedAt:Date.now(),status:'completed',steps:0,logs:[],result:null};}
       if(path==='/api/connection/connect')data={connectionId:'fixture',generation:0};
       if(path==='/api/connection/resume')data={connectionId:'fixture',generation:(window.__resumeGeneration=(window.__resumeGeneration||0)+1)};
-      if(path==='/api/app-state')data={collectedAt:Date.now(),catalog:{apps:[]},processes:[],navigation:{locked:false,current:null,tasks:[]}};
+      if(path==='/api/app-state')data={collectedAt:Date.now(),catalog:{apps:[{packageName:'com.fixture.alpha',thirdParty:true,launchers:['com.fixture.alpha/.MainActivity']},{packageName:'com.fixture.beta',thirdParty:false,launchers:['com.fixture.beta/.MainActivity']}]},processes:[],navigation:{locked:false,current:null,tasks:[]}};
+      if(path==='/api/apps/open'){window.__appsOpen.push(JSON.parse(options.body));data={status:'ok',execution:'sent',verification:'verified',changed:true,foregroundApp:JSON.parse(options.body).packageName};}
       if(path==='/api/webrtc/config')data={provider:'coturn',availableProviders:['coturn'],iceTransportPolicy:'relay',iceServers:[{urls:'turns:fixture.invalid:8443?transport=tcp'}],renewAfterMs:null};
       if(path==='/api/webrtc/config'&&JSON.parse(options.body).provider==='none')data={provider:'none',availableProviders:['none'],iceTransportPolicy:'all',iceServers:[],renewAfterMs:null};
       if(path==='/api/webrtc/config'&&fixtureMode)data={...data,provider:'cloudflare',availableProviders:['cloudflare'],gatherMs:50};
@@ -125,6 +126,23 @@ try {
   await page.locator('.properties').click();await page.getByRole('dialog',{name:'节点属性',exact:true}).waitFor();
   assert.ok((await page.getByRole('dialog',{name:'节点属性',exact:true}).textContent()).includes('fixture:id/search'));
   await page.keyboard.press('Escape');await page.locator('.console-detail-dialog').waitFor({state:'detached'});assert.equal(await page.locator('.results').textContent(),oldLog);
+  // 应用抽屉：导航栏打开应用列表，可筛选、点开应用，Escape 关闭并把焦点还给按钮。
+  await page.locator('.app-drawer-toggle').click();
+  const drawer=page.getByRole('dialog',{name:'应用抽屉',exact:true});await drawer.waitFor();
+  await page.waitForFunction(()=>document.querySelectorAll('.app-drawer-row').length===2);
+  assert.equal(await drawer.locator('.app-drawer-row').count(),2);
+  await drawer.locator('.app-drawer-filter').fill('beta');
+  assert.equal(await drawer.locator('.app-drawer-row').count(),1);
+  await drawer.getByRole('button',{name:'打开 com.fixture.beta',exact:true}).click();
+  await page.waitForFunction(()=>window.__appsOpen.length>0);
+  const opened=await page.evaluate(()=>window.__appsOpen[0]);
+  assert.equal(opened.packageName,'com.fixture.beta');assert.equal(opened.component,'com.fixture.beta/.MainActivity');
+  await page.waitForFunction(()=>document.querySelector('#app-drawer').hidden===true);
+  await page.locator('.app-drawer-toggle').click();await drawer.waitFor();
+  assert.equal(await drawer.locator('.app-drawer-row').count(),2,'the filter resets on the next open');
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(()=>document.querySelector('#app-drawer').hidden===true);
+  assert.equal(await page.evaluate(()=>document.activeElement?.className),'app-drawer-toggle');
   await page.evaluate(()=>{window.__original=structuredClone(window.__state);window.__observe({...window.__state,windowId:'other',nodes:[],focus:null,foregroundApp:'new.app'});});
   assert.equal(await page.locator('.detail-name').textContent(),'请选择节点');assert.equal(await page.locator('.locate').isDisabled(),true);assert.match(await page.locator('.detail-status').textContent(),/重新选择/);
   await page.evaluate(()=>{window.__refreshResult={...window.__state,captureSeq:window.__state.captureSeq-1,foregroundApp:'old.app'};});
@@ -300,6 +318,6 @@ try {
   assert.equal(await page.locator('[data-video-mode][value=auto]').isChecked(),true);
   assert.equal(await page.locator('[data-video-mode][value=wss]').isDisabled(),true);
   assert.equal(await page.evaluate(()=>window.__sockets.some(ws=>ws.url.includes('/ws/video'))),false);
-  assert.deepEqual(errors,[]);const report={passed:true,checks:['more tools use a modal and buttons remain hit-testable after close in three desktop sizes','full properties open outside the timeline','window changes clear the inspector and disable highlighting','late refresh responses cannot replace the latest observation','search matches class names and marks filtered results','label clicks use the original target and nearest row','task progress occupies one lazy result row','one draft textbox without mirror controls','fill/type and Enter never send automatically','draft does not block navigation or JS','explicit Unicode/empty writes','phone changes never overwrite draft','focus change requires target selection','one-shot native read','failure preserves draft without retry','own verified resize and clear retain the same target','delayed observation keeps text actions disabled until the own write is observed','external resize, replacement and new window require target selection','node jitter default and checkbox override','JS captures jitter setting','jitter setting survives reload','two viewport layouts','enlarge exit','video-only reconnect','accessible logout confirmation','WSS-only creates no WebRTC and resets unavailable saved mode','WSS diagnostics include version and auth headers; failed reporting leaves control online','direct-only is selectable without TURN or WSS'],phoneAccessed:false,writes};
+  assert.deepEqual(errors,[]);const report={passed:true,checks:['more tools use a modal and buttons remain hit-testable after close in three desktop sizes','full properties open outside the timeline','window changes clear the inspector and disable highlighting','late refresh responses cannot replace the latest observation','search matches class names and marks filtered results','label clicks use the original target and nearest row','task progress occupies one lazy result row','one draft textbox without mirror controls','fill/type and Enter never send automatically','draft does not block navigation or JS','explicit Unicode/empty writes','phone changes never overwrite draft','focus change requires target selection','one-shot native read','failure preserves draft without retry','own verified resize and clear retain the same target','delayed observation keeps text actions disabled until the own write is observed','external resize, replacement and new window require target selection','node jitter default and checkbox override','JS captures jitter setting','jitter setting survives reload','two viewport layouts','enlarge exit','video-only reconnect','accessible logout confirmation','WSS-only creates no WebRTC and resets unavailable saved mode','WSS diagnostics include version and auth headers; failed reporting leaves control online','direct-only is selectable without TURN or WSS','app drawer lists launchable apps, filters, opens one and closes with Escape'],phoneAccessed:false,writes};
   await writeFile('.local/agent-ui-result.json',JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify(report));
 }finally{await browser?.close();await new Promise(resolve=>server.close(resolve));}

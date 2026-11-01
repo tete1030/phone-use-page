@@ -387,7 +387,12 @@ try {
     for(const row of temporary)row.remove();return data;
   });
   assert.ok(populated.scrollHeight<=populated.height+1);for(const area of populated.areas){assert.ok(area.scrollHeight>area.height,JSON.stringify(populated.areas));assert.equal(area.overflow,'auto');}
+  // 展开的应用面板要能看见至少两行，而不是只剩一条缝。
+  const appsArea=await page.evaluate(()=>{const list=document.querySelector('.apps-list'),panel=document.querySelector('.applications-panel'),columns=document.querySelector('.applications-columns');return {list:list.clientHeight,columns:columns.clientHeight,panel:panel.clientHeight};});
+  assert.ok(appsArea.list>=90,'expanded applications panel leaves room for rows: '+JSON.stringify(appsArea));
+  assert.ok(appsArea.columns>=140,JSON.stringify(appsArea));
   checks.push({name:'long application, node and timeline lists scroll locally without expanding the desktop workspace'});
+  checks.push({name:'the expanded applications panel keeps room for several rows'});
   await page.setViewportSize({width:390,height:844});await page.waitForTimeout(100);await page.evaluate(()=>window.__paintFrame());
   const cdp=await context.newCDPSession(page),box=await page.locator('.video-canvas').boundingBox(),tx=box.x+box.width/2,ty=box.y+box.height/2;
   const mobilePhoneBox=await page.locator('.phone').boundingBox(),bufferY=mobilePhoneBox.y+mobilePhoneBox.height+1;
