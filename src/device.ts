@@ -63,7 +63,7 @@ export class Device extends EventEmitter {
   private applications?:ApplicationState;private readingApplications?:Promise<ApplicationState>;
   constructor(serial:string,python:string,adb:string) {
     super();this.bridge=new Bridge(serial,python,adb);this.video=new Video(serial);
-    this.state={connected:false,serial,model:'',android:'',system:'',width:0,height:0,rotation:0,screenOn:false,secure:false,snapshotId:'',collectedAt:0,nodes:[],foregroundApp:'',focus:null,focusEpoch:0,uiError:'正在连接设备',videoError:null,controlAvailable:false};
+    this.state={connected:false,serial,model:'',android:'',system:'',width:0,height:0,rotation:0,screenOn:false,snapshotId:'',collectedAt:0,nodes:[],foregroundApp:'',focus:null,focusEpoch:0,uiError:'正在连接设备',videoError:null,controlAvailable:false};
     this.video.on('status',(error:string|null)=>{this.state.videoError=error;this.state.controlAvailable=!!this.video.client?.controller;this.notify();});
     this.video.on('diagnostic',(line:string)=>{if(/INJECT_EVENTS|SecurityException/.test(line)){this.state.controlAvailable=false;this.state.videoError='设备拒绝了调试操作，请检查事件注入权限、厂商调试安全设置或设备管理策略';this.notify();}});
   }
@@ -107,7 +107,7 @@ export class Device extends EventEmitter {
   private async readTree() {
     const captureStartedAt=Date.now();
     try {
-      const result=await this.bridge.call<{nodes:AndroidNode[];width:number;height:number;rotation:number;screenOn:boolean;locked:boolean|null;windowId:string;secure?:boolean;elapsedMs:number}>('snapshot');
+      const result=await this.bridge.call<{nodes:AndroidNode[];width:number;height:number;rotation:number;screenOn:boolean;locked:boolean|null;windowId:string;elapsedMs:number}>('snapshot');
       const collectedAt=Date.now();
       const previousFocus=this.state.focus?.id;
       const hash=createHash('sha256').update(JSON.stringify(result.nodes)).digest('hex');
@@ -115,7 +115,7 @@ export class Device extends EventEmitter {
       // The power timer refreshes every 2 s; accept its reading here instead of
       // paying a second phone round trip for every snapshot.
       const recentPower=await this.refreshPower(2500).then(()=>({screenOn:this.state.screenOn,locked:this.state.locked})).catch(()=>({screenOn:result.screenOn,locked:result.locked}));
-      Object.assign(this.state,{connected:true,nodes:result.nodes,width:result.width,height:result.height,rotation:result.rotation,...recentPower,windowId:result.windowId,secure:!!result.secure,uiElapsedMs:result.elapsedMs,collectedAt,captureStartedAt,captureSeq:(this.state.captureSeq||0)+1,uiError:null});
+      Object.assign(this.state,{connected:true,nodes:result.nodes,width:result.width,height:result.height,rotation:result.rotation,...recentPower,windowId:result.windowId,uiElapsedMs:result.elapsedMs,collectedAt,captureStartedAt,captureSeq:(this.state.captureSeq||0)+1,uiError:null});
       this.state.foregroundApp=result.nodes.find(n=>n.package&&!n.package.startsWith('com.android.systemui'))?.package||result.nodes[0]?.package||'';
       const fields=result.nodes.filter(n=>n.focused&&n.editable&&!n.password);this.state.focus=fields.length===1?fields[0]!:null;this.state.focusReason=fields.length>1?'AMBIGUOUS_FOCUS':fields.length===1?null:'NO_EDITABLE_FOCUS';
       if(previousFocus!==this.state.focus?.id)this.state.focusEpoch++;

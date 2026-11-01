@@ -206,22 +206,11 @@ WSS 失败与限次恢复上报直接打印到后端日志，不写数据库。�
 - **设备来源**由镜像决定：沙箱 GSI 的 `InputManagerService` 把注入的 MotionEvent / KeyEvent 改写成手机自己的触摸屏 / keypad 设备 id，`InputDispatcher` 不再把它们压回 `-1`。按键因此和实体音量键一样来自真实设备。
 - **UHID 默认关闭**：只有 `CONSOLE_KEYBOARD=uhid` 才让 scrcpy 注册 USB 键盘。该设备会被应用枚举到（飞书 `ExternalKeyboardUtils`、京东设备表），只有在需要真实 HID 语义时才开启；沙箱镜像还会把它从应用可见的设备表里过滤掉。默认的 keycode 注入不新增任何输入设备。
 
-## 受保护画面：安全截图覆盖
-
-`FLAG_SECURE` 窗口允许内容显示在物理屏幕上，同时从截图与非安全屏幕捕获中被排除。它作用在 SurfaceFlinger 合成阶段，因此任何走 scrcpy 虚拟显示、`screencap` 或 WebRTC 采集的通道都只会得到黑面；换 TURN/WSS、调编码或重连都不能恢复。过去记录的“标题栏可见、正文黑色”就是这一层。
-
-2026-11-01 起，控制台不再只是记录，而是改用设备自己的 root 通道补齐画面：
-
-- **识别**：桥接层每次窗口变化（并有 2 秒兜底）读取一次 `dumpsys window windows`，在**当前焦点窗口**的 flags 行里找 `SECURE`。只看焦点窗口，避免其他安全窗口造成误报。
-- **采集**：`vendor/screencap-secure-arm64` 是 AOSP 12 `screencap` 加了 `-s`（捕获安全层）与 `-w/-H`（按比例缩小采集缓冲）的构建产物，改动见 `patches/screencap-secure.patch`。镜像第一次需要时把它推到 `/data/local/tmp/android-console-screencap` 并校验 SHA-256，之后每次采集以 `/debug_ramdisk/su -c` 执行。相机分辨率由页面按观察到的屏幕尺寸折半传入，例如 1080×2400 → 540×1200。
-- **呈现**：页面把 `/api/secure-frame` 的 PNG 铺在视频画面上方（`.secure-canvas`），约每 0.3–0.5 秒更新一帧。视频通道照常运行，只是被这一层盖住；离开安全窗口后自动撤掉。
-- **手动开关**：画面下方「安全截图」按钮可强制启用。自动识别漏判（例如窗口标记出现在非焦点子窗口）时用它兜底。
-
-边界与代价：
-
-- 需要设备上的 Magisk `su` 可用（沙箱 GSI 的 root 通道，见 `provision_root.sh`）。root 不可用时接口返回 502，页面保留上一帧并记录一次日志。
-- 这是**快照覆盖**而非连续视频：约 2–3 fps，点击、拖动仍然按真实坐标送到手机上，但画面更新比视频慢。
-- 快照包含屏幕上的真实内容，接口与其它页面接口一样要求登录、CSRF 与页面所有权；不写审计之外的副本。
-- 用途限于操作自己的沙箱设备与查看自己的登录页。不用于规避银行、考勤等场景的保护，也不把该能力扩展到他人设备。
-
+## 受保护画面：沙箱在合成阶段就不标记 secure
+2026-10-11 记录：使用者反馈某些应用的登录页在手机上正常显示，但串流只显示标题栏，正文为黑色。根因在 SurfaceFlinger：`FLAG_SECURE` 的窗口在合成给非安全采集通道（scrcpy 虚拟显示、`screencap`、WebRTC）时被整块排除，换 TURN/WSS、调编码或重连都无济于事。
+2026-11-01：沙箱镜像改为在窗口管理阶段就不把 secure 标记交给 SurfaceFlinger —— `WindowState.isSecureLocked()` 恒为 false（`sandbox-poc/framework/patches/0015-wm-ignore-flag-secure.patch`）。这个函数是下游的唯一源头：`WindowStateAnimator.prepareSurfaceLocked` 用它给 SurfaceControl 加 `SECURE`，`WindowManagerService.relayoutWindow` 与 `RootWindowContainer.setSecureSurfaceState` 用它同步已有 Surface，`DisplayContent` 用它判断窗口能否被截图。返回 false 之后，secure 层从不存在，视频、截图与 WebRTC 全部回到原有管线，控制台不需要任何专门接口或覆盖层。
+- 应用无感知：`FLAG_SECURE` 仍是应用自己窗口的属性，`dumpsys window` 也照旧列出，只是不再影响合成。
+- 代价：依赖安全输出的受保护视频（DRM 高等级）可能被降级；这台沙箱不用于播放受保护影片。
+- 边界：只用于操作我们自己的沙箱设备，不用于规避银行、考勤等场景的保护。
+- 部署：重装镜像时补丁随 system 分区生效；不重装 DSU 时用 Magisk 模块覆盖 `services.jar`，重启后生效。
 参考：[Android 安全窗口说明](https://developer.android.com/security/fraud-prevention/activities)、[scrcpy 上游受保护窗口说明](https://github.com/Genymobile/scrcpy/issues/3072)。

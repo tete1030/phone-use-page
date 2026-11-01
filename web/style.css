@@ -197,7 +197,6 @@ body{background:#f5f7fc}
 #android-observable .connection-note{position:absolute;z-index:8;top:91px;left:8px;right:8px;padding:8px 12px;border:1px solid #e2c6b6;background:#fff7f1;color:#98593b;font-size:13px;border-radius:3px}
 #android-observable .workspace{position:relative}
 #android-observable .workspace[inert]{opacity:.66}
-#android-observable .secure-canvas{position:absolute;inset:0;z-index:3;width:100%;height:100%;object-fit:contain;background:#edf2fa;pointer-events:none}
 #android-observable .screen-shield{position:absolute;inset:0;z-index:4;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:9px;background:rgba(247,250,255,.94);color:var(--as-text);padding:22px;text-align:center}
 #android-observable .screen-title{font-size:22px;font-weight:500}
 #android-observable .screen-help{font-size:13px;line-height:1.7;max-width:280px;color:var(--as-dim);white-space:normal}

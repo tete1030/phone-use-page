@@ -10,7 +10,6 @@ export interface Observation {
   connected: boolean; serial: string; model: string; android: string; system: string;
   width: number; height: number; rotation: number; screenOn: boolean;
   locked?: boolean | null;
-  secure?: boolean;
   snapshotId: string; collectedAt: number; nodes: AndroidNode[];
   windowId?: string; uiElapsedMs?: number;
   captureSeq?:number; captureStartedAt?:number; observationRevision?:number;
