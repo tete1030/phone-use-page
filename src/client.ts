@@ -4,6 +4,7 @@ import {resolveNodeClick} from './node-click.js';
 import {acceptsObservation,observationExpired} from './observation-order.js';
 import { AndroidKeyCode } from '@yume-chan/scrcpy';
 import { label, clickHint, nodeValue, shortId, shownNodes, taskResultPreview } from './presentation.js';
+import { projectObservation, renderObservationText } from './observation-view.js';
 import type { AndroidNode, Observation, Target } from './types.js';
 import { installApplications } from './applications-client.js';
 import { normalizeBasePath,consolePath } from './paths.js';
@@ -69,6 +70,10 @@ async function initialize() {
   // ?view=actionable 让浏览器 Agent 从精简列表开始，省掉重复标签与纯文字行；人工仍可一键切回。
   const initialView=new URLSearchParams(location.search).get('view');
   let observation:Observation=boot.state,ownsControl=boot.ownsControl,controlAllowed=true,taskBusy=false,appsBusy=false,filter=initialView==='actionable'||initialView==='full'||initialView==='compact'?initialView:'compact',query='';
+  // 每页 80 行：大页面不必一次把整棵树读进上下文；筛选、搜索、读取都会重置。
+  const NODE_PAGE=80;
+  let nodeLimit=NODE_PAGE;
+  let changedBase:{snapshotId:string;nodes:Map<string,AndroidNode>}|null=null;
   let applications:ReturnType<typeof installApplications>|undefined;
   let online=false,connecting=false,connectionId='',connectionEpoch=0,networkAbort=new AbortController(),needsRefresh=false,waking=false,eventsSocket:WebSocket|null=null;
   let recovering=false,transportReady=false,readySignal=false,transportGeneration=0,recoverySince=0,recoveryAttempt=0,lastControlMessage=0,lastEventsMessage=0;
@@ -146,7 +151,12 @@ async function initialize() {
   }
   async function perform(path:string,data:any){try{const result=await api(path,{requestId:crypto.randomUUID(),...(path==='/api/node'?{clickOptions:clickOptions()}:{}),...data});const names:Record<string,string>={'/api/node':data.action==='setText'?'填写文字':data.action==='focus'?'聚焦输入框':data.action==='click'?'点击':'节点动作','/api/press':'手机按键','/api/gesture':data.kind||'手势','/api/wake':'唤醒并解锁','/api/panel':data.kind==='notifications'?'展开通知栏':'展开控制中心','/api/apps/open':'打开应用','/api/android-tasks/switch':'切换任务','/api/navigation/back':'连续返回'};const node=observation.nodes.find(n=>n.id===data.target?.id);const outcome=result.verification==='verified'?'已验证':result.verification==='failed'?'验证失败':result.verification==='inconclusive'?'无法确认效果':result.changed===true?'已发送，界面已变化':result.changed===false?'已发送，界面无变化':'已发送，未验证';const elapsed=typeof result.elapsedMs==='number'?` · ${(result.elapsedMs/1000).toFixed(1)}s`:'';const row=log((names[path]||path)+' · '+(data.key||data.packageName||(node?label(node,observation.nodes):data.target?.id)||data.taskId||'')+' · '+outcome+elapsed);receiptDetails(row,result);return result;}catch(error){log(String(error));throw error;}}
   applications=installApplications(root,{api,perform,canAct:()=>interactive()&&controlAllowed&&!appsBusy&&!touch?.active(),online:()=>online,busyChanged:busy=>{appsBusy=busy;textState();details();}});
-  function chooseTextTarget(node:AndroidNode|null,source:DraftTarget['source']='selected'){
+
+  // 应用面板默认收起：标题行保留规模数字，展开才把列表放进页面与无障碍树。
+  const appsPanel=q('.applications-panel'),appsBody=q('.applications-body'),appsToggle=q<HTMLButtonElement>('.applications-toggle');
+  const setAppsOpen=(open:boolean)=>{appsToggle.setAttribute('aria-expanded',String(open));appsBody.classList.toggle('open',open);appsPanel.classList.toggle('collapsed',!open);};
+  setAppsOpen(false);
+  appsToggle.addEventListener('click',()=>setAppsOpen(appsToggle.getAttribute('aria-expanded')!=='true'));  function chooseTextTarget(node:AndroidNode|null,source:DraftTarget['source']='selected'){
     draftTarget=node?{node:structuredClone(node),windowId:observation.windowId,source}:null;textNotice='';textState();
   }
   function textState(message?:string){
@@ -177,7 +187,12 @@ async function initialize() {
     assign(q('.agent-status'),`控制=${controlState}｜观察=${age===null?'等待':observationExpired(observation)?`已过期(${age}s)`:`${age}s 前`}｜键盘=${captured?'手机':'网页'}｜前台=${observation.foregroundApp||'未知'}`);
     applications?.controlsChanged();
   }
-  function renderNodes(){const source=observation,display=shownNodes(source.nodes,filter,query),wanted=new Set(display.map(n=>n.id)),positions=new Map<Element,number>();
+  // “只看变化”以打开该视图时的快照为基准；后台轮询不会移动基准，读到的就是这期间的差异。
+  function changedNodes(){const before=changedBase?.nodes;if(!before)return [];return observation.nodes.filter(n=>{const b=before.get(n.id);return !b||b.fingerprint!==n.fingerprint;});}
+  function renderNodes(){
+    const source=observation;
+    const all=filter==='changed'?changedNodes():shownNodes(source.nodes,filter,query);
+    const total=all.length,display=all.slice(0,nodeLimit),wanted=new Set(display.map(n=>n.id)),positions=new Map<Element,number>();
     q<HTMLElement>('.snapshot-warning').hidden=!observationExpired(observation);
     rows.forEach((row,id)=>{if(!wanted.has(id)){row.li.remove();rows.delete(id);}});
     for(const n of display){let row=rows.get(n.id);if(!row){const li=document.createElement('li'),button=document.createElement('button');button.type='button';button.className='node-button';li.dataset.nodeId=n.id;
@@ -187,7 +202,17 @@ async function initialize() {
       const parent=rows.get(n.parentId||'');let container:Element=q('.node-list');if(parent&&wanted.has(n.parentId!)){if(parent.children.parentNode!==parent.li)parent.li.append(parent.children);container=parent.children;}
       const index=positions.get(container)||0;if(container.children[index]!==row.li)container.insertBefore(row.li,container.children[index]||null);positions.set(container,index+1);
     }
-    rows.forEach(row=>{if(!row.children.children.length)row.children.remove();});assign(q('.count'),query.trim()?'筛选中 · '+display.length+'/'+source.nodes.length:display.length+' 条节点');
+    rows.forEach(row=>{if(!row.children.children.length)row.children.remove();});
+    const count=q('.count');
+    if(query.trim())assign(count,'筛选中 · '+total+'/'+source.nodes.length);
+    else if(filter==='changed'){
+      const removed=changedBase?[...changedBase.nodes.keys()].filter(id=>!source.nodes.some(n=>n.id===id)).length:0;
+      assign(count,'变化 '+total+' 行'+(removed?' · 消失 '+removed:'')+(changedBase?' · 基准 '+changedBase.snapshotId:''));
+    }else{
+      const actionable=source.nodes.filter(n=>n.clickable||n.editable||n.checkable).length;
+      assign(count,display.length+(total>display.length?'/'+total:'')+' 条节点 · 可操作 '+actionable+' 行');
+    }
+    const more=q<HTMLButtonElement>('.node-more');more.hidden=total<=display.length;if(!more.hidden)assign(more,'显示更多（还有 '+(total-display.length)+' 行）');
     assign(q('.snapshot-version'),source.snapshotId||'等待元素数据');
     assign(q('.ui-status'),observationExpired(observation)?'观察已过期':'');qa('[data-filter]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.filter===filter)));details();
   }
@@ -246,11 +271,11 @@ async function initialize() {
   });
   q('.clipboard-read').addEventListener('click',async()=>{if(dirty&&!await confirmAction('读取剪贴板将覆盖网页草稿，确认？'))return;try{const value=await api('/api/clipboard',{write:false});text.value=value.text;dirty=true;textState('剪贴板已读为草稿，未写入手机');}catch(error){log(String(error));}});
   q('.clipboard-write').addEventListener('click',async()=>{try{await api('/api/clipboard',{write:true,text:text.value});log('剪贴板写入请求已发送；未自动粘贴');}catch(error){log(String(error));}});
-  q('.nodes-refresh').addEventListener('click',async()=>{const button=q<HTMLButtonElement>('.nodes-refresh');button.disabled=true;assign(button,'读取中');try{update(await api('/api/refresh',{}));}catch(error){log(String(error));}finally{button.disabled=!online;assign(button,'立即读取');}});
+  q('.node-more').addEventListener('click',()=>{nodeLimit+=NODE_PAGE;renderNodes();});q('.copy-observe').addEventListener('click',async()=>{const text=renderObservationText(projectObservation(observation,'actionable'));try{await navigator.clipboard.writeText(text);log('已复制文字观察：'+text.length+' 字符 / '+text.split('\n').length+' 行');}catch{log('复制失败：浏览器未授权剪贴板，可在文字观察页阅读');}});q('.nodes-refresh').addEventListener('click',async()=>{const button=q<HTMLButtonElement>('.nodes-refresh');button.disabled=true;assign(button,'读取中');try{update(await api('/api/refresh',{}));}catch(error){log(String(error));}finally{button.disabled=!online;assign(button,'立即读取');}});
   q('.timeline-copy').addEventListener('click',()=>void navigator.clipboard.writeText(q('.results').textContent||'').catch(()=>log('复制失败，请选择时间线文字复制')));
   const clearSearch=document.createElement('button');clearSearch.type='button';clearSearch.className='node-search-clear';clearSearch.textContent='清除筛选';clearSearch.hidden=true;q('.searchbar').append(clearSearch);
   const search=q<HTMLInputElement>('.node-search');clearSearch.addEventListener('click',()=>{search.value=query='';clearSearch.hidden=true;renderNodes();search.focus();});
-  qa('[data-filter]').forEach(b=>b.addEventListener('click',()=>{filter=b.dataset.filter!;renderNodes();}));search.addEventListener('input',()=>{query=search.value;clearSearch.hidden=!query.trim();renderNodes();});
+  qa('[data-filter]').forEach(b=>b.addEventListener('click',()=>{filter=b.dataset.filter!;nodeLimit=NODE_PAGE;changedBase=filter==='changed'?{snapshotId:observation.snapshotId,nodes:new Map(observation.nodes.map(n=>[n.id,n]))}:null;renderNodes();}));search.addEventListener('input',()=>{query=search.value;nodeLimit=NODE_PAGE;clearSearch.hidden=!query.trim();renderNodes();});
   for(const [selector,action]of [['.inspect-click','click'],['.inspect-hold','longPress'],['.inspect-focus','focus'],['.inspect-toggle','setChecked']])q(selector!).addEventListener('click',()=>{if(!inspected)return;void perform('/api/node',{target:{...target(inspected.node),snapshotId:inspected.snapshotId,windowId:inspected.windowId},action,value:action==='setChecked'?!inspected.node.checked:undefined}).catch(()=>{});});
   q('.properties').addEventListener('click',()=>{if(inspected)openJsonDetails('节点属性',{snapshotId:inspected.snapshotId,windowId:inspected.windowId,collectedAt:observation.collectedAt,node:inspected.node},root);});
   q('.locate').addEventListener('click',()=>{if(!inspected)return;const [l,t,r,b]=inspected.node.bounds,box=q<HTMLElement>('.highlight-box');box.hidden=false;box.style.left=l/observation.width*100+'%';box.style.top=t/observation.height*100+'%';box.style.width=(r-l)/observation.width*100+'%';box.style.height=(b-t)/observation.height*100+'%';});

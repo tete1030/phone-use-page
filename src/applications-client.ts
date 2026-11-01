@@ -53,10 +53,12 @@ export function installApplications(root:HTMLElement,options:{api:(path:string)=
       }
       assign(q('.'+mode+'-count'),mode==='apps'?`${items.length} 显示 / ${state.catalog.apps.length} 包`:`${items.length} 条`);
     }
+    // 面板收起时，标题行仍显示规模，避免“看不见就当没有”。
+    assign(q('.applications-summary'),`应用 ${state.catalog.apps.length} · 任务 ${state.navigation.tasks.length} · 进程 ${state.processes.length}`);
     controlsChanged();
   }
   async function load(refresh=false){if(loading||!options.online())return;const current=epoch;loading=true;controlsChanged();try{const next=await options.api('/api/app-state'+(refresh?'?refreshCatalog=1':''));if(!options.online()||current!==epoch)return;state=next;error='';render();}
-    catch(e){if(options.online()&&current===epoch){error=String(e);q('.applications-status').hidden=false;assign(q('.applications-status'),'应用数据不可用：'+error+'；旧数据保留，动作暂停');}}
+    catch(e){if(options.online()&&current===epoch){error=String(e);q('.applications-status').hidden=false;assign(q('.applications-status'),'应用数据不可用：'+error+'；旧数据保留，动作暂停');assign(q('.applications-summary'),'应用数据不可用');}}
     finally{if(current===epoch){loading=false;controlsChanged();}}
   }
   async function poll(){const current=epoch;clearTimeout(timer);if(!options.online())return;await load();if(options.online()&&current===epoch)timer=setTimeout(poll,3500);}

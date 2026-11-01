@@ -47,6 +47,7 @@ try{
   const csrf=await api(page,'/api/webrtc/offer',{type:'offer',sdp:'invalid'},{'X-Console-CSRF':'invalid'});assert.equal(csrf.status,403);record('signaling requires CSRF',{status:csrf.status});
   await shell('input','keyevent','223');await waitState(page,s=>!s.screenOn);
   await page.locator('.phone').click();await waitState(page,s=>s.screenOn&&s.locked===false);record('clicking video wakes and unlocks');
+  if(await page.locator('.applications-toggle').getAttribute('aria-expanded')!=='true'){await page.locator('.applications-toggle').click();await page.waitForTimeout(150);}
   await page.locator('.application-search').fill('com.android.settings');
   const open=page.locator('.apps-list').getByRole('button',{name:/^打开 com\.android\.settings(?: |$)/}).first();await open.click();await waitState(page,s=>s.foregroundApp==='com.android.settings');await page.waitForFunction(()=>!document.querySelector('[data-press=BACK]').disabled,{},{timeout:25000});await wait(800);record('app list opens Settings');await page.screenshot({path:dir+'/settings-before.png'});
   const before=await observation(page),r=await page.locator('video').boundingBox(),oldFrames=Number((await frames(page)).videoFramesDecoded);

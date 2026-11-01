@@ -377,6 +377,8 @@ try {
   checks.push({name:'desktop panels fit the viewport with usable list areas and independent content scrolling'});
   checks.push({name:'wrapped descriptions stay within panels and timestamps fit one line at every tested viewport'});
   await page.setViewportSize({width:1600,height:900});await page.waitForTimeout(100);
+  // 应用面板默认收起；布局检查在展开后进行。
+  if(await page.locator('.applications-toggle').getAttribute('aria-expanded')!=='true'){await page.locator('.applications-toggle').click();await page.waitForTimeout(150);}
   const populated=await page.evaluate(()=>{
     const lists=[document.querySelector('.node-list'),document.querySelector('.tasks-list'),document.querySelector('.apps-list'),document.querySelector('.results')];
     const temporary=[];for(const list of lists)for(let i=0;i<120;i++){const row=document.createElement(list.tagName==='UL'?'li':'div');row.textContent='fixture row '+i+' - long content for independent scrolling';row.style.minHeight='24px';list.append(row);temporary.push(row);}
@@ -384,7 +386,7 @@ try {
     const data={height:work.clientHeight,scrollHeight:work.scrollHeight,areas:areas.map(n=>({height:n.clientHeight,scrollHeight:n.scrollHeight,overflow:getComputedStyle(n).overflowY}))};
     for(const row of temporary)row.remove();return data;
   });
-  assert.ok(populated.scrollHeight<=populated.height+1);for(const area of populated.areas){assert.ok(area.scrollHeight>area.height);assert.equal(area.overflow,'auto');}
+  assert.ok(populated.scrollHeight<=populated.height+1);for(const area of populated.areas){assert.ok(area.scrollHeight>area.height,JSON.stringify(populated.areas));assert.equal(area.overflow,'auto');}
   checks.push({name:'long application, node and timeline lists scroll locally without expanding the desktop workspace'});
   await page.setViewportSize({width:390,height:844});await page.waitForTimeout(100);await page.evaluate(()=>window.__paintFrame());
   const cdp=await context.newCDPSession(page),box=await page.locator('.video-canvas').boundingBox(),tx=box.x+box.width/2,ty=box.y+box.height/2;

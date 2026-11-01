@@ -133,6 +133,17 @@ try {
   await page.evaluate(()=>{const leaf={...window.__state.nodes[0],id:'label',parentId:'row',text:'WLAN',description:'',editable:false,focused:false,clickable:false,bounds:[100,200,250,260]};const row={...leaf,id:'row',parentId:null,clickable:true,text:'',resourceId:'fixture:id/row',bounds:[50,150,900,350]};window.__observe({...window.__state,nodes:[row,leaf],focus:null});});
   await page.locator('[data-filter="full"]').click();assert.ok((await page.locator('[data-node-id="label"] > .node-button > .node-value').textContent()).includes('不可直接点击'));assert.ok((await page.locator('[data-node-id="row"] > .node-button > .node-value').textContent()).includes('可点击'));await page.locator('[data-node-id="label"] > .node-button').click();assert.equal(await page.locator('.inspect-click').textContent(),'在手机上点击');assert.match(await page.locator('.detail-status').textContent(),/祖先行 nrow/);await page.locator('.inspect-click').click();
   await page.waitForFunction(()=>window.__nodeActions.at(-1)?.target.id==='label');assert.equal(await page.evaluate(()=>window.__nodeActions.at(-1).target.id),'label');await page.evaluate(()=>{window.__nodeActions=[];window.__observe(window.__original);});await page.locator('[data-filter="compact"]').click();
+  // 只看变化：以打开视图时的快照为基准，列表只显示之后变了的行；复制文字观察走同一份投影。
+  await page.locator('[data-filter="changed"]').click();
+  assert.match(await page.locator('.count').textContent(),/变化 0 行/);
+  await page.evaluate(()=>{const nodes=window.__state.nodes.map(n=>({...n}));nodes[0]={...nodes[0],text:'变化后的条目',fingerprint:'changed-1'};nodes.push({...nodes[0],id:'extra',parentId:null,text:'新条目',clickable:false,fingerprint:'extra'});window.__observe({...window.__state,nodes});});
+  await page.waitForFunction(()=>/变化 2 行/.test(document.querySelector('.count').textContent));
+  assert.equal(await page.locator('[data-node-id="extra"]').count(),1);
+  await page.locator('.copy-observe').click();
+  await page.waitForFunction(()=>document.querySelector('.results').textContent.includes('已复制文字观察'));
+  const copied=await page.evaluate(()=>navigator.clipboard.readText());
+  assert.match(copied,/^安卓观察 · /);
+  await page.evaluate(()=>window.__observe(window.__original));await page.locator('[data-filter="compact"]').click();
   const summaries=await page.locator('[data-log-key="task:fixture-script"]').count();assert.equal(summaries,1);assert.equal(await page.locator('.results pre').count(),0);
   await page.evaluate(()=>{const t={id:'preview-script',status:'completed',startedAt:Date.now(),steps:4,canStop:false,logs:[],result:{execution:'sent',verification:'not_verified',detail:'x'.repeat(5000)}};const socket=window.__sockets.find(s=>s.url.includes('/ws/events'));socket.onmessage({data:JSON.stringify({type:'task',task:t})});socket.onmessage({data:JSON.stringify({type:'task',task:{...t,status:'running',steps:1,canStop:true,result:null}})});});
   assert.ok((await page.locator('.task-status').textContent()).startsWith('已完成'));assert.equal(await page.locator('.run').isEnabled(),true);

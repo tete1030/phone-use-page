@@ -71,6 +71,7 @@ body{background:#f5f7fc}
 #android-observable .node-filter {display:flex;gap:4px;align-items:center;padding:0 7px;border-bottom:1px solid var(--as-line);}
 #android-observable .node-filter button {font-size:12px;min-height:22px;padding:1px 7px;}
 #android-observable .node-filter .count {margin-left:auto;font-size:12px;color:var(--as-dim);}
+#android-observable .node-more{margin:4px 8px;font-size:12px;min-height:24px;padding:1px 8px}
 #android-observable .click-jitter-label {display:flex;align-items:center;gap:3px;font-size:11px;white-space:nowrap;}
 #android-observable .click-jitter-label input {width:auto;margin:0;}
 #android-observable .node-body {overflow:auto;overscroll-behavior:contain;min-height:0;padding:2px 6px;}
@@ -144,7 +145,15 @@ body{background:#f5f7fc}
 #android-observable .view-help,#android-observable .text-help {padding:0 7px;font-size:11px;color:var(--as-dim);display:flex;align-items:center;}
 #android-observable .phone-toggle {display:inline-block;padding:2px 7px;border-radius:4px;background:var(--as-select);color:var(--as-accent);margin-left:5px;}
 #android-observable .nodes-pane > .section-head h2{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#android-observable .applications-panel{grid-area:applications;min-width:0;min-height:0;display:grid;grid-template-rows:28px minmax(0,1fr) 18px;border:1px solid var(--as-line);background:var(--as-panel)}
+#android-observable .applications-panel{grid-area:applications;min-width:0;min-height:0;display:grid;grid-template-rows:28px minmax(0,1fr);border:1px solid var(--as-line);background:var(--as-panel)}
+#android-observable .applications-panel.collapsed{align-self:start;grid-template-rows:28px auto}
+#android-observable .applications-panel.collapsed .applications-tools,#android-observable .applications-panel.collapsed .applications-columns,#android-observable .applications-panel.collapsed .applications-status{display:none}
+#android-observable .applications-body{display:grid;grid-template-rows:auto auto minmax(0,1fr) auto;min-height:0;overflow:hidden}
+#android-observable .applications-toggle{cursor:pointer;width:100%;text-align:left;font:inherit;font-size:12px;color:var(--as-dim);background:none;border:0;border-bottom:1px solid var(--as-line);padding:4px 8px}
+#android-observable .applications-toggle[aria-expanded=true]{color:var(--as-text,inherit)}
+#android-observable .applications-toggle .applications-summary{margin-left:8px}
+#android-observable .applications-tools{padding:4px 8px;border-bottom:1px solid var(--as-line)}
+#android-observable .applications-tools .application-search{margin-left:0;width:100%;max-width:none}
 #android-observable .applications-panel > .section-head{gap:8px}
 #android-observable .applications-panel .application-search{margin-left:auto;width:330px;max-width:50%;height:23px;padding:2px 6px;font-size:12px}
 #android-observable .applications-refresh{font-size:12px;min-height:22px;padding:1px 6px}
