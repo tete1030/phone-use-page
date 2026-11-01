@@ -104,7 +104,8 @@ app.post(endpoint('/api/activity'),req=>{const s=session(req,true);pages.activit
 app.get(endpoint('/api/screenshot'),async(req,reply)=>{const s=session(req);const image=await device.bridge.call('screenshot');pages.requireOwner(s.owner);return reply.type(image.mime).header('Content-Disposition','attachment; filename=phone-'+Date.now()+'.'+(image.mime==='image/png'?'png':'jpg')).send(Buffer.from(image.data,'base64'));});
 app.post(endpoint('/api/panel'),async req=>{const s=session(req,true),p=z.object({requestId:z.string().uuid(),kind:z.enum(['notifications','settings'])}).parse(req.body);return once(req,()=>device.panel(s.owner,p.kind));});
 app.post(endpoint('/api/clipboard'),async req=>{const s=session(req,true),p=z.object({write:z.boolean().default(false),text:z.string().max(32768).optional()}).parse(req.body);pages.activity(s.owner);return device.enqueue(s.owner,async()=>{await device.ensureInteractive();return device.bridge.call('clipboard',p);});});
-const targetSchema=z.object({id:z.string().max(200),fingerprint:z.string().max(100),snapshotId:z.string().max(100).optional(),windowId:z.string().max(1000).optional()});
+const targetContentSchema=z.object({className:z.string().max(500),package:z.string().max(500),resourceId:z.string().max(1000),text:z.string().max(65536),description:z.string().max(65536)});
+const targetSchema=z.object({id:z.string().max(200),fingerprint:z.string().max(100),snapshotId:z.string().max(100).optional(),windowId:z.string().max(1000).optional(),content:targetContentSchema.optional()});
 app.post(endpoint('/api/node/text'),async req=>{const s=session(req,true),p=z.object({target:targetSchema}).strict().parse(req.body);pages.activity(s.owner);return device.readText(s.owner,p.target);});
 const clickOptionsSchema=z.object({jitter:z.boolean().optional()}).strict();
 const requestCache=new Map<string,{hash:string;work:Promise<unknown>;time:number}>();

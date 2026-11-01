@@ -5,6 +5,7 @@ import { Video } from './video.js';
 import { ConsoleError, type AndroidNode, type Observation, type Selector, type Target, type ActionResult, type ApplicationState, type Navigation } from './types.js';
 import {nodeTouchPoint,resolveClickOptions,type ClickOptions} from './click-options.js';
 import {resolveNodeClick,nodeClickPointClear} from './node-click.js';
+import {sameTargetContent} from './target-match.js';
 import {label,shortId} from './presentation.js';
 import {planGesture,type GestureKind,type GestureSpec,type Realism} from './gesture-plan.js';
 import {chooseBackend,frameworkArgv,unsupportedReason,UNPROBED,type DeviceCapabilities,type ResolvedBackend} from './gesture-backend.js';
@@ -138,7 +139,11 @@ export class Device extends EventEmitter {
   enqueue<T>(session:string,fn:()=>Promise<T>,task?:string,announce=true):Promise<T>{this.claim(session,task);const revision=this.state.observationRevision;this.pendingActions++;if(announce)this.notify();const work=this.tail.then(async()=>{this.claim(session,task);return fn();}).finally(()=>{this.pendingActions--;if(announce||!this.pendingActions&&this.state.observationRevision!==revision)this.notify();});this.tail=work.catch(()=>{});return work;}
   async target(target:Target):Promise<AndroidNode> {
     await this.collect({fresh:true});const node=this.state.nodes.find(n=>n.id===target.id);
-    if(!node||node.fingerprint!==target.fingerprint||target.windowId&&target.windowId!==this.state.windowId)throw new ConsoleError('STALE_TARGET','所选节点已变化，请重新查看属性',409);
+    // A list that reflowed under the caller (new row, scroll) changes the
+    // fingerprint without changing the node. Accept that when the caller sent
+    // what it saw and the content still matches; the click uses fresh bounds.
+    const reflowed=!!node&&node.fingerprint!==target.fingerprint&&!!target.content&&sameTargetContent(target.content,node);
+    if(!node||node.fingerprint!==target.fingerprint&&!reflowed||target.windowId&&target.windowId!==this.state.windowId)throw new ConsoleError('STALE_TARGET','所选节点已变化，请重新查看属性',409);
     if(!node.enabled||!node.visible)throw new ConsoleError('UNAVAILABLE_TARGET','目标不可用或不在有效屏幕区域',409);
     return node;
   }

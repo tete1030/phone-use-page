@@ -1,6 +1,7 @@
 import {confirmAction} from './confirmation.js';
 import {openDetailDialog,openJsonDetails} from './detail-dialog.js';
 import {resolveNodeClick} from './node-click.js';
+import {targetContent} from './target-match.js';
 import {acceptsObservation,observationExpired} from './observation-order.js';
 import { AndroidKeyCode } from '@yume-chan/scrcpy';
 import { label, clickHint, nodeValue, shortId, shownNodes, taskResultPreview } from './presentation.js';
@@ -104,7 +105,10 @@ async function initialize() {
   const rows=new Map<string,{li:HTMLLIElement;button:HTMLButtonElement;num:HTMLElement;branch:HTMLElement;label:HTMLElement;value:HTMLElement;children:HTMLUListElement}>();
   q('.node-list').replaceChildren();
   const assign=(el:Element,value:string)=>{if(el.textContent!==value)el.textContent=value;};
-  const target=(n:AndroidNode):Target=>({id:n.id,fingerprint:n.fingerprint,snapshotId:observation.snapshotId,windowId:observation.windowId});
+  const target=(n:AndroidNode):Target=>({id:n.id,fingerprint:n.fingerprint,snapshotId:observation.snapshotId,windowId:observation.windowId,content:targetContent(n)});
+  // A list that reflows under the selection (row inserted, list scrolled) keeps
+  // the node; only its geometry changes. Compare content, not the fingerprint.
+  const sameTarget=(a:AndroidNode,b:AndroidNode)=>a.id===b.id&&a.package===b.package&&a.resourceId===b.resourceId&&a.className===b.className&&a.description===b.description&&a.editable===b.editable&&(a.editable||a.text===b.text);
   q('.device-model').addEventListener('click',()=>openJsonDetails('设备信息',{model:observation.model,android:observation.android,system:observation.system,serial:observation.serial,screenOn:observation.screenOn,locked:observation.locked,keepAwake:observation.keepAwake,summary:observation.summary},root));
   const url=(path:string)=>{const u=new URL(endpoint(path),location.href);u.searchParams.set('page',boot.pageId);u.searchParams.set('connection',connectionId);u.searchParams.set('generation',String(transportGeneration));return u.toString().replace(/^http/,'ws');};
   const viewUrl=(path:string)=>{const u=new URL(endpoint(path),location.href);u.searchParams.set('page',boot.pageId);u.searchParams.set('connection',connectionId);return u.pathname+u.search;};
@@ -177,6 +181,8 @@ async function initialize() {
     assign(q('.text-status'),!online||!interactive()?'':textPending?'正在处理文字':writtenDraft?'等待输入框更新':!node&&draftTarget?'目标已改变，请重新选择；草稿保留':textNotice);q<HTMLElement>('.text-status').hidden=!q('.text-status').textContent;
     inputAvailability();
   }
+  // Set below, once the key handlers exist: they own the queue and its flush.
+  let flushQueuedKeys:()=>void=()=>{};
   function inputAvailability(){phone.disabled=!online||!transportReady||taskBusy||appsBusy;text.readOnly=textPending;q<HTMLButtonElement>('.video-reconnect').disabled=!online;const blocked=!!touch?.active()||!interactive()||(!controlAllowed||appsBusy)||!observation.controlAvailable;q('.keys')?.querySelectorAll<HTMLButtonElement>('button').forEach(b=>b.disabled=blocked);qa('[data-press],[data-gesture],[data-mode],[data-panel]').forEach(b=>(b as HTMLButtonElement).disabled=blocked);const localTaskRunning=currentTask?.status==='running'&&currentTask.canStop;q<HTMLButtonElement>('.run').disabled=!online||!transportReady||taskBusy||localTaskRunning||!controlAllowed||appsBusy||!!touch?.active();q<HTMLButtonElement>('.check-code').disabled=!online||taskBusy||localTaskRunning;details();route();}
   function route(){const active=document.activeElement,ready=interactive()&&!!control&&control.readyState===1&&observation.controlAvailable&&controlAllowed&&!appsBusy, captured=active===phone&&ready;
     const focus=active===phone?'手机画面':active===text?'文本输入框':active===editor?'JS 编辑框':active===q('.node-search')?'元素搜索框':'网页';
@@ -185,7 +191,7 @@ async function initialize() {
     const age=observation.collectedAt?Math.max(0,Math.round((Date.now()-observation.collectedAt)/100)/10):null;
     const controlState=!online?'离线':!transportReady?'连接中':!observation.controlAvailable?'设备未允许控制':touch?.active()?'手势中':taskBusy?'脚本执行中':!controlAllowed?'其他页面控制':'就绪';
     assign(q('.agent-status'),`控制=${controlState}｜观察=${age===null?'等待':observationExpired(observation)?`已过期(${age}s)`:`${age}s 前`}｜键盘=${captured?'手机':'网页'}｜前台=${observation.foregroundApp||'未知'}`);
-    applications?.controlsChanged();
+    applications?.controlsChanged();flushQueuedKeys();
   }
   // “只看变化”以打开该视图时的快照为基准；后台轮询不会移动基准，读到的就是这期间的差异。
   function changedNodes(){const before=changedBase?.nodes;if(!before)return [];return observation.nodes.filter(n=>{const b=before.get(n.id);return !b||b.fingerprint!==n.fingerprint;});}
@@ -231,10 +237,10 @@ async function initialize() {
   function details(){
     if(inspected){const latest=observation.nodes.find(n=>n.id===inspected!.node.id),old=inspected.node;
       if(inspected.windowId!==observation.windowId||!latest){inspected=null;detailNotice='目标已消失或窗口已变化，请重新选择';}
-      else if(latest.package!==old.package||latest.resourceId!==old.resourceId||JSON.stringify(latest.bounds)!==JSON.stringify(old.bounds)||(!latest.editable&&latest.text!==old.text))detailNotice='目标已变化，请重新选择后再操作';
+      else if(!sameTarget(old,latest))detailNotice='目标已变化，请重新选择后再操作';
       else{inspected={node:structuredClone(latest),snapshotId:observation.snapshotId,windowId:observation.windowId};detailNotice='';}
     }
-    const n=inspected?.node,current=observation.nodes.find(x=>x.id===n?.id),stable=!!n&&!!current&&n.fingerprint===current.fingerprint;
+    const n=inspected?.node,current=observation.nodes.find(x=>x.id===n?.id),stable=!!n&&!!current&&sameTarget(n,current);
     const ready=interactive()&&!observationExpired(observation)&&controlAllowed&&!appsBusy&&!taskBusy&&!touch?.active()&&observation.controlAvailable;
     const valid=stable&&ready;
     const click=n&&valid?resolveNodeClick(n,observation.nodes,observation.width,observation.height):null;
@@ -285,11 +291,22 @@ async function initialize() {
   root.addEventListener('focusin',route);root.addEventListener('focusout',()=>setTimeout(()=>{if(document.activeElement!==phone)void releaseKeys();route();},0));
   addEventListener('blur',()=>{if(document.activeElement===phone)phone.blur();void releaseInput();route();});document.addEventListener('visibilitychange',()=>{if(document.hidden){if(document.activeElement===phone)phone.blur();void releaseInput();}route();});
   const held=new Map<string,{code:number;repeat:number}>();let warnedFocus=false,dropNoticeAt=0;
+  // A key pressed while the control channel is still coming back is kept for a
+  // few seconds and replayed once it is ready, instead of being dropped: the
+  // page knows when the channel returns, the person pressing it does not.
+  const queuedKeys:{code:number;meta:number;at:number}[]=[];const QUEUE_WAIT_MS=3000,QUEUE_MAX=8;
+  function sendKeyPress(code:number,meta:number){const socket=control;if(socket?.readyState!==1)return false;socket.send(JSON.stringify({type:'key',request:crypto.randomUUID(),action:0,code,meta,repeat:0}));setTimeout(()=>{if(control?.readyState===1)control.send(JSON.stringify({type:'key',request:crypto.randomUUID(),action:1,code,meta,repeat:0}));},80);return true;}
+  flushQueuedKeys=()=>{if(!queuedKeys.length)return;if(control?.readyState!==1||!observation.controlAvailable||!interactive()||!controlAllowed||appsBusy)return;let sent=0,dropped=0;while(queuedKeys.length){const key=queuedKeys.shift()!;if(Date.now()-key.at>QUEUE_WAIT_MS){dropped++;continue;}sendKeyPress(key.code,key.meta);sent++;}if(sent)log(`控制通道已就绪，补发排队的 ${sent} 个按键`);if(dropped)log(`按键排队超过 3 秒，已放弃 ${dropped} 个`);};
   const keys=AndroidKeyCode as unknown as Record<string,number>;
   const browserKeys:Record<string,string>={Backspace:'Backspace',Escape:'Escape',Enter:'Enter',Tab:'Tab',Space:'Space',ArrowUp:'ArrowUp',ArrowDown:'ArrowDown',ArrowLeft:'ArrowLeft',ArrowRight:'ArrowRight',Home:'MoveHome',End:'MoveEnd',Delete:'ForwardDelete',ShiftLeft:'ShiftLeft',ShiftRight:'ShiftRight',ControlLeft:'ControlLeft',ControlRight:'ControlRight',AltLeft:'AltLeft',AltRight:'AltRight'};
   function metaKeys(e:KeyboardEvent){return (e.shiftKey?1:0)|(e.altKey?2:0)|(e.ctrlKey?4096:0)|(e.metaKey?65536:0);}
   function keyCode(e:KeyboardEvent){return keys[e.code]??keys[browserKeys[e.code]||''];}
-  phone.addEventListener('keydown',e=>{if(e.key==='Escape'){e.preventDefault();text.focus();void releaseInput();return;}if(e.key==='Tab')return;if(e.isComposing||e.key==='Process'){log('中文请在网页草稿框填写，再点击“填写到手机”');return;}const code=keyCode(e);if(code===undefined||!interactive()||control?.readyState!==1||!observation.controlAvailable){if(code!==undefined&&Date.now()-dropNoticeAt>2000){dropNoticeAt=Date.now();log('按键未发送：手机控制通道尚未就绪；页面会显示就绪状态，稍候重试无需重新点击画面');}return;}e.preventDefault();if(observation.focus)warnedFocus=false;else if(!warnedFocus&&((code>=29&&code<=54)||code===67)){warnedFocus=true;log('未确认文字焦点；按键效果未验证');}if(!controlAllowed||appsBusy){log('设备忙，按键未发送');return;}const repeat=(held.get(e.code)?.repeat??-1)+1;held.set(e.code,{code,repeat});control.send(JSON.stringify({type:'key',request:crypto.randomUUID(),action:0,code,meta:metaKeys(e),repeat}));});
+  phone.addEventListener('keydown',e=>{if(e.key==='Escape'){e.preventDefault();text.focus();void releaseInput();return;}if(e.key==='Tab')return;if(e.isComposing||e.key==='Process'){log('中文请在网页草稿框填写，再点击“填写到手机”');return;}const code=keyCode(e);
+    if(code!==undefined&&interactive()&&(control?.readyState!==1||!observation.controlAvailable)){
+      if(!e.repeat){e.preventDefault();if(queuedKeys.length>=QUEUE_MAX)queuedKeys.shift();queuedKeys.push({code,meta:metaKeys(e),at:Date.now()});if(Date.now()-dropNoticeAt>2000){dropNoticeAt=Date.now();log('手机控制通道尚未就绪，按键已排队，就绪后自动补发（最多等 3 秒）');}}
+      return;
+    }
+    if(code===undefined||!interactive()||control?.readyState!==1||!observation.controlAvailable){if(code!==undefined&&Date.now()-dropNoticeAt>2000){dropNoticeAt=Date.now();log('按键未发送：手机控制通道尚未就绪；页面会显示就绪状态，稍候重试无需重新点击画面');}return;}e.preventDefault();if(observation.focus)warnedFocus=false;else if(!warnedFocus&&((code>=29&&code<=54)||code===67)){warnedFocus=true;log('未确认文字焦点；按键效果未验证');}if(!controlAllowed||appsBusy){log('设备忙，按键未发送');return;}const repeat=(held.get(e.code)?.repeat??-1)+1;held.set(e.code,{code,repeat});control.send(JSON.stringify({type:'key',request:crypto.randomUUID(),action:0,code,meta:metaKeys(e),repeat}));});
   phone.addEventListener('keyup',e=>{const previous=held.get(e.code);if(!previous)return;e.preventDefault();held.delete(e.code);if(control?.readyState===1)control.send(JSON.stringify({type:'key',request:crypto.randomUUID(),action:1,code:previous.code,meta:metaKeys(e),repeat:0}));});
   function showTouch(x:number,y:number){const mark=q<HTMLElement>('.touch-marker');mark.hidden=false;mark.style.left=x/meta.width*100+'%';mark.style.top=y/meta.height*100+'%';setTimeout(()=>mark.hidden=true,600);}
   touch=installTouch({element:phone,bufferElement:phonePane,bufferMargin:20,geometry:()=>{const r=canvas.getBoundingClientRect(),ratio=meta.width/meta.height,w=Math.min(r.width,r.height*ratio),h=w/ratio;return {width:meta.width,height:meta.height,left:r.left+(r.width-w)/2,top:r.top+(r.height-h)/2,displayWidth:w,displayHeight:h};},

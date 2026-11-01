@@ -72,6 +72,16 @@ test('JS node options override a captured task default without changing that def
 test('compact view retains independently actionable child toggles',()=>{const nodes=[node(),node({id:'toggle',parentId:'node',depth:1,text:'按钮',checkable:true})];assert.equal(shownNodes(nodes,'compact','').length,2);});
 test('search retains ancestor context instead of reparenting to unrelated nodes',()=>{const nodes=[node({id:'root',clickable:false}),node({id:'parent',parentId:'root',depth:1}),node({id:'child',parentId:'parent',depth:2,text:'查找对象'})];assert.deepEqual(shownNodes(nodes,'full','查找对象').map(n=>n.id),['root','parent','child']);});
 test('phone text cannot inject HTML into server-rendered observation',()=>assert.equal(escape('<script>"&</script>'),'&lt;script&gt;&quot;&amp;&lt;/script&gt;'));
+test('a reflowed list keeps its target when the content is unchanged',async()=>{
+  const d=new Device('test','unused','unused');
+  d.state.nodes=[node({fingerprint:'moved',bounds:[0,140,100,240]})];d.state.windowId='w1';d.collect=async()=>d.state;
+  const content={className:'android.widget.Button',package:'pkg',resourceId:'pkg:id/button',text:'按钮',description:''};
+  const moved=await d.target({id:'node',fingerprint:'original',windowId:'w1',content});
+  assert.deepEqual(moved.bounds,[0,140,100,240],'the fresh bounds are what gets clicked');
+  await assert.rejects(d.target({id:'node',fingerprint:'original',windowId:'w1',content:{...content,text:'按钮2'}}),/所选节点已变化/);
+  await assert.rejects(d.target({id:'node',fingerprint:'original',windowId:'w2',content}),/所选节点已变化/);
+  await assert.rejects(d.target({id:'node',fingerprint:'original',windowId:'w1'}),/所选节点已变化/,'without the caller content a moved fingerprint stays stale');
+});
 test('stale signatures are rejected before an input is sent',async()=>{const d=new Device('test','unused','unused');d.state.nodes=[node({fingerprint:'changed'})];d.collect=async()=>d.state;await assert.rejects(d.target({id:'node',fingerprint:'original'}),/所选节点已变化/);});
 test('ambiguous selectors fail rather than selecting the first duplicate',()=>{const d=new Device('test','unused','unused');d.state.nodes=[node(),node({id:'second'})];assert.throws(()=>d.find({text:'按钮'}),/匹配到多个/);});
 test('cancelled task cannot reclaim device control',()=>{const d=new Device('test','unused','unused');d.activeTask='new';assert.throws(()=>d.claim('session','old'),/任务已停止/);d.activeTask=undefined;assert.throws(()=>d.claim('session','old'),/任务已停止/);});

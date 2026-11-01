@@ -130,6 +130,14 @@ try {
   await page.locator('.nodes-refresh').click();await page.waitForFunction(()=>document.querySelector('.nodes-refresh').textContent==='立即读取');assert.equal(await page.locator('.foreground').textContent(),'new.app');
   await page.evaluate(()=>window.__observe(window.__original));
   await page.locator('.node-search').fill('android.view.View');assert.ok((await page.locator('.count').textContent()).includes('筛选中'));await page.locator('.node-search').fill('');
+  // B3：列表重排只挪位置时选中项保留、动作仍可发；内容变了才拒绝
+  await page.locator('.node-button').first().click();
+  await page.evaluate(()=>{const id=window.__state.nodes[0].id;window.__observe({...window.__state,nodes:window.__state.nodes.map(n=>n.id===id?{...n,bounds:[n.bounds[0]+20,n.bounds[1]+240,n.bounds[2]+20,n.bounds[3]+240],fingerprint:'moved'}:n)});});
+  assert.equal(await page.locator('.inspect-click').isDisabled(),false,'a moved node stays actionable');
+  assert.ok((await page.locator('.detail-properties').textContent()).includes('[80,420→970,540]'),'the selection follows the fresh bounds');
+  await page.evaluate(()=>{const id=window.__state.nodes[0].id;window.__observe({...window.__state,nodes:window.__state.nodes.map(n=>n.id===id?{...n,resourceId:'fixture:id/other',fingerprint:'renamed'}:n)});});
+  assert.equal(await page.locator('.inspect-click').isDisabled(),true,'changed identity is still rejected');
+  assert.match(await page.locator('.detail-status').textContent(),/目标已变化/);
   await page.evaluate(()=>{const leaf={...window.__state.nodes[0],id:'label',parentId:'row',text:'WLAN',description:'',editable:false,focused:false,clickable:false,bounds:[100,200,250,260]};const row={...leaf,id:'row',parentId:null,clickable:true,text:'',resourceId:'fixture:id/row',bounds:[50,150,900,350]};window.__observe({...window.__state,nodes:[row,leaf],focus:null});});
   await page.locator('[data-filter="full"]').click();assert.ok((await page.locator('[data-node-id="label"] > .node-button > .node-value').textContent()).includes('不可直接点击'));assert.ok((await page.locator('[data-node-id="row"] > .node-button > .node-value').textContent()).includes('可点击'));await page.locator('[data-node-id="label"] > .node-button').click();assert.equal(await page.locator('.inspect-click').textContent(),'在手机上点击');assert.match(await page.locator('.detail-status').textContent(),/祖先行 nrow/);await page.locator('.inspect-click').click();
   await page.waitForFunction(()=>window.__nodeActions.at(-1)?.target.id==='label');assert.equal(await page.evaluate(()=>window.__nodeActions.at(-1).target.id),'label');await page.evaluate(()=>{window.__nodeActions=[];window.__observe(window.__original);});await page.locator('[data-filter="compact"]').click();
@@ -185,6 +193,23 @@ try {
   assert.equal(await page.evaluate(()=>window.__writes.at(-1).target.id),'field1');
   const screenRect=await page.locator('.video-canvas').boundingBox();await page.mouse.click(screenRect.x+screenRect.width/2,screenRect.y+screenRect.height/2);await page.keyboard.press('Escape');
   assert.equal(await draft.evaluate(node=>document.activeElement===node),true);
+  // B2：控制通道恢复期间按下的键不丢，排队后补发（超时才放弃）
+  const keyQueue=await page.evaluate(async()=>{
+    window.__pauseObservation=true;
+    const socket=window.__sockets.find(s=>s.url.includes('/ws/control')),phone=document.querySelector('.phone');
+    window.__messages.length=0;socket.readyState=3;
+    phone.dispatchEvent(new KeyboardEvent('keydown',{key:'Backspace',code:'Backspace',bubbles:true,cancelable:true}));
+    const during=window.__messages.filter(m=>m.type==='key').length;
+    socket.readyState=1;window.__observe(window.__state);
+    await new Promise(r=>setTimeout(r,200));
+    const after=window.__messages.filter(m=>m.type==='key').map(m=>[m.action,m.code]);
+    window.__pauseObservation=false;return {during,after};
+  });
+  assert.equal(keyQueue.during,0,'nothing may be sent while the channel is down');
+  assert.deepEqual(keyQueue.after,[[0,67],[1,67]],'the queued press is replayed as a held key');
+  const queueLog=await page.locator('.results').innerText();
+  assert.ok(queueLog.includes('按键已排队'),queueLog.slice(0,300));
+  assert.ok(queueLog.includes('补发排队的 1 个按键'),queueLog.slice(0,300));
   await page.evaluate(()=>{window.__powerPaused=true;window.__observe({...window.__state,powerError:'fixture power unavailable',powerCollectedAt:Date.now()});});
   assert.equal(await page.locator('.device-status').textContent(),'状态待确认');assert.equal(await page.locator('.text-submit').isDisabled(),true);
   await page.evaluate(()=>window.__paintFrame());
