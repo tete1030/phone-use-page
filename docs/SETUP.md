@@ -152,7 +152,7 @@ sh scripts/start.sh
    docker compose --env-file .local/compose.env -f compose.yaml -f compose.wss.yaml ps
    ```
 
-配置包含 HTTP 监听地址、运行用户/组、设备权限和状态挂载。环境示例默认绑定 `127.0.0.1`，适合同**一台主机**上的代理/连接器。代理位于其他机器或容器网络时，按实际拓扑设 `CONSOLE_HTTP_HOST=0.0.0.0` 或合适的主机地址，并将入站访问限制为该连接器。Linux `network_mode: host` 不使用 Compose `ports:`；媒体端口也直接使用主机端口。
+需要完整模式（自建 coturn 主中继 + Cloudflare TURN 备用 + WSS 兜底）时，把上面命令里的两个 `-f` 换成 `-f compose.full.yaml`，并确认 `COTURN_URL`、`COTURN_KEY_PATH`、`CF_TURN_KEY_PATH` 已配置；`compose.full.yaml` 内部固定了整套叠加顺序，重建容器时不会因为少写一层而悄悄降级。配置包含 HTTP 监听地址、运行用户/组、设备权限和状态挂载。环境示例默认绑定 `127.0.0.1`，适合同**一台主机**上的代理/连接器。代理位于其他机器或容器网络时，按实际拓扑设 `CONSOLE_HTTP_HOST=0.0.0.0` 或合适的主机地址，并将入站访问限制为该连接器。Linux `network_mode: host` 不使用 Compose `ports:`；媒体端口也直接使用主机端口。
 
 NAS 界面、systemd 或其他容器管理器可以复现同样的镜像、环境、用户、USB、挂载和网络设置。这些是可选部署工具，不是应用要求。
 
@@ -164,6 +164,7 @@ NAS 界面、systemd 或其他容器管理器可以复现同样的镜像、环�
 
 | 启用的视频通道 | 原生设置 | 叠加的 Compose 文件，均以 `compose.yaml` 为基础 |
 | --- | --- | --- |
+| 完整模式：两种 TURN + WSS 兜底（推荐） | 服务为 `coturn`、`WEBRTC_TURN_FALLBACK=cloudflare`、设置两个密钥文件、WSS 开启 | `compose.full.yaml`（单文件，内含下列三层叠加；重建时不会漏层） |
 | 仅 WSS，关闭两种 TURN | `WEBRTC_ENABLED=0`、`VIDEO_WSS_FALLBACK=1` | `compose.wss.yaml`，不叠加 TURN 文件 |
 | 仅 WebRTC 直连 | `WEBRTC_ENABLED=1`、`WEBRTC_TURN_PROVIDER=none`、`VIDEO_WSS_FALLBACK=0` | 仅基础文件，在 compose.env 设置开关 |
 | WebRTC 直连 + WSS | 同上，但 `VIDEO_WSS_FALLBACK=1` | 仅基础文件，在 compose.env 设置开关 |

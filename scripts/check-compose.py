@@ -76,6 +76,24 @@ with tempfile.TemporaryDirectory(prefix='phone-compose-') as directory:
             if source in changes:
                 assert env[target] == changes[source], label
         print(f'PASS {label} (configuration only)')
+    # compose.full.yaml 固定完整叠加；注意 include 的合并顺序与多个 -f 相反
+    # （靠前的文件优先），这里确认二者解析结果一致，避免文档与实际配置漂移。
+    key_file = Path(directory) / 'turn-key.json'
+    key_file.write_text('{}')
+    complete = {**base, 'VIDEO_WSS_FALLBACK': '1', 'COTURN_KEY_PATH': str(key_file), 'CF_TURN_KEY_PATH': str(key_file)}
+    config.write_text(''.join(f'{key}={value}\n' for key, value in complete.items()))
+    def console_config(*files):
+        command = ['docker', 'compose', '--env-file', str(config)]
+        for name in files:
+            command.extend(['-f', str(root / name)])
+        command.extend(['config', '--format', 'json'])
+        output = subprocess.check_output(command, cwd=root, env={k: os.environ[k] for k in ('PATH', 'HOME') if k in os.environ})
+        return json.loads(output)['services']['console']
+    single = console_config('compose.full.yaml')
+    chain = console_config('compose.yaml', 'compose.coturn.yaml', 'compose.fallback.yaml')
+    assert single['environment'] == chain['environment'], 'compose.full.yaml drifted from the explicit overlay chain'
+    assert {v['target'] for v in single['volumes']} == {v['target'] for v in chain['volumes']}, 'compose.full.yaml mounts drifted'
+    print('PASS full-include (configuration only)')
     command = ['docker', 'compose', '--env-file', str(config), '-f', str(root / 'examples/coturn/compose.yaml'), 'config', '--quiet']
     subprocess.run(command, check=True, env={k: os.environ[k] for k in ('PATH', 'HOME') if k in os.environ})
     print('PASS standalone coturn recipe (configuration only)')

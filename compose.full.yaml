@@ -1,0 +1,11 @@
+# 完整模式：基础文件 + 自建 coturn 主中继 + Cloudflare TURN 备用 + WSS 兜底。
+# 等价于 `-f compose.yaml -f compose.coturn.yaml -f compose.fallback.yaml`。
+#
+# 注意顺序：Compose 的 include 合并时“靠前的文件优先”（与命令行多个 -f 的
+# “靠后优先”相反），所以这里把最具体的叠加文件排在前面、基础文件排在最后。
+# 需要 COTURN_URL、COTURN_KEY_PATH 和 CF_TURN_KEY_PATH 指向的密钥文件都存在；
+# 只有 WSS 或单路 TURN 的部署仍按 docs/DEPLOYMENT_SCENARIOS.md 选择各自的叠加文件。
+include:
+  - compose.fallback.yaml
+  - compose.coturn.yaml
+  - compose.yaml

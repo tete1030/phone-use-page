@@ -9,7 +9,8 @@
 - **本机或仅 WSS**：不需要 TURN 账号、中继密钥、域名、公网 IP 或入站媒体端口。使用环境变量示例，或 Docker 的 `compose.yaml` + `compose.wss.yaml`。
 - **自建 TURN**：使用可达的 coturn 主机和自行选择的 DNS/TLS 服务；配合 `compose.coturn.yaml` 及私有密钥/地址。独立 Linux TURN 示例位于 `examples/coturn/`。
 - **Cloudflare TURN**：独立可选；使用 `compose.turn.yaml` 和服务端专用密钥。控制台 DNS/代理可以继续使用其他供应商。
-- **两种 TURN**：以 coturn 为主，叠加 `compose.fallback.yaml`；WSS 可以独立启用或关闭。
+- **完整模式（推荐，默认）**：使用 `compose.full.yaml`，一个文件固定住 `compose.yaml` + `compose.coturn.yaml` + `compose.fallback.yaml` 整套叠加：自建 coturn 为主，Cloudflare TURN 备用，WSS 兜底。重建容器时不会漏掉某一层而悄悄降级。需要 `COTURN_URL`、`COTURN_KEY_PATH` 和 `CF_TURN_KEY_PATH` 三个私有设置。
+- **两种 TURN 手动叠加**：`compose.yaml` + `compose.coturn.yaml` + `compose.fallback.yaml`，或按需只叠加其中一层；WSS 可以独立启用或关闭。
 - **HTTP 隧道**：任何满足 HTTPS/WebSocket 要求的隧道均可；手册包含可选 Cloudflare Tunnel 配置。隧道传输页面/WSS，独立的 TURN 媒体不经过该 HTTP 通道。
 
 变量行为和支持的组合见[配置参考](docs/CONFIGURATION.md)。操作系统、安卓、浏览器、IPv4/IPv6 和基础设施限制见[兼容性与运行要求](docs/PORTABILITY.md)。
