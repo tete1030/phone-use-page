@@ -68,6 +68,7 @@ class BridgeTests(unittest.TestCase):
         self.device = DeviceFixture()
         bridge.device = self.device
         bridge.power_cache['at'] = 0
+        bridge.info_cache.update(at=0.0, value=None, rotation=None)
 
     def identity_params(self, text):
         node = next(n for n in bridge.tree()['nodes'] if n['editable'])

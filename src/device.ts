@@ -36,7 +36,7 @@ export class Device extends EventEmitter {
   state: Observation;
   owner?: string; private leaseUntil=0; activeTask?: string;
   authorize:(owner:string)=>void=()=>{};
-  private tail: Promise<unknown> = Promise.resolve(); private collecting?: Promise<Observation>;
+  private tail: Promise<unknown> = Promise.resolve(); private collecting?: Promise<Observation>;private collectingAt=0;
   private nextCapture?:Promise<Observation>;private resettingControl?:Promise<void>;
   private sessionActive=false;
   private pendingActions=0;private manualTouchOwner?:string;
@@ -84,13 +84,20 @@ export class Device extends EventEmitter {
     const power=async()=>{if(this.stopped)return;if(this.sessionActive)try{await this.refreshPower();}catch{}if(!this.stopped)this.powerTimer=setTimeout(power,2000);};this.powerTimer=setTimeout(power,1000);
     this.leaseTimer=setInterval(()=>{if(this.owner&&Date.now()>this.leaseUntil&&!this.activeTask&&!this.touching){this.owner=undefined;void this.video.release();this.notify();}},2000);
   }
-  collect({fresh=false}:{fresh?:boolean}={}):Promise<Observation> {
+  /**
+   * `fresh` bypasses a capture already in flight and reads the tree again.
+   * `reuseMs` lets a read-only caller accept a capture that *started* that
+   * recently instead of paying for a second dump behind it; an action never
+   * sets it, because its post-action state must come from a dump that began
+   * after the gesture.
+   */
+  collect({fresh=false,reuseMs=0}:{fresh?:boolean;reuseMs?:number}={}):Promise<Observation> {
     if(this.collecting){
-      if(!fresh)return this.collecting;
+      if(!fresh||reuseMs>0&&Date.now()-this.collectingAt<=reuseMs)return this.collecting;
       if(!this.nextCapture)this.nextCapture=this.collecting.catch(()=>{}).then(()=>{this.nextCapture=undefined;return this.collect();});
       return this.nextCapture;
     }
-    this.collecting=this.readTree().finally(()=>{this.collecting=undefined;});return this.collecting;
+    this.collectingAt=Date.now();this.collecting=this.readTree().finally(()=>{this.collecting=undefined;});return this.collecting;
   }
   private async readTree() {
     const captureStartedAt=Date.now();
@@ -100,7 +107,9 @@ export class Device extends EventEmitter {
       const previousFocus=this.state.focus?.id;
       const hash=createHash('sha256').update(JSON.stringify(result.nodes)).digest('hex');
       if(hash!==this.hash){this.hash=hash;this.state.snapshotId='ui-'+(++this.generation);}
-      const recentPower=await this.refreshPower(1200).then(()=>({screenOn:this.state.screenOn,locked:this.state.locked})).catch(()=>({screenOn:result.screenOn,locked:result.locked}));
+      // The power timer refreshes every 2 s; accept its reading here instead of
+      // paying a second phone round trip for every snapshot.
+      const recentPower=await this.refreshPower(2500).then(()=>({screenOn:this.state.screenOn,locked:this.state.locked})).catch(()=>({screenOn:result.screenOn,locked:result.locked}));
       Object.assign(this.state,{connected:true,nodes:result.nodes,width:result.width,height:result.height,rotation:result.rotation,...recentPower,windowId:result.windowId,uiElapsedMs:result.elapsedMs,collectedAt,captureStartedAt,captureSeq:(this.state.captureSeq||0)+1,uiError:null});
       this.state.foregroundApp=result.nodes.find(n=>n.package&&!n.package.startsWith('com.android.systemui'))?.package||result.nodes[0]?.package||'';
       const fields=result.nodes.filter(n=>n.focused&&n.editable&&!n.password);this.state.focus=fields.length===1?fields[0]!:null;this.state.focusReason=fields.length>1?'AMBIGUOUS_FOCUS':fields.length===1?null:'NO_EDITABLE_FOCUS';
