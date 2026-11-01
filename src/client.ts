@@ -66,7 +66,9 @@ async function initialize() {
   right.inert=mobile.matches;
   const boot=JSON.parse(document.getElementById('console-bootstrap')!.textContent!);
   q('.logout')?.addEventListener('click',async()=>{if(!await confirmAction('退出登录会断开本会话并停止本会话任务，确认退出？'))return;const button=q<HTMLButtonElement>('.logout');button.disabled=true;try{const r=await fetch(endpoint('/api/logout'),{method:'POST',headers:{'Content-Type':'application/json','X-Console-CSRF':boot.csrf},body:'{}'});if(r.ok||r.status===401)location.reload();else{q<HTMLElement>('.connection-note').hidden=false;q('.connection-note').textContent='退出请求未完成，请刷新后重试';}}finally{button.disabled=false;}});
-  let observation:Observation=boot.state,ownsControl=boot.ownsControl,controlAllowed=true,taskBusy=false,appsBusy=false,filter='compact',query='';
+  // ?view=actionable 让浏览器 Agent 从精简列表开始，省掉重复标签与纯文字行；人工仍可一键切回。
+  const initialView=new URLSearchParams(location.search).get('view');
+  let observation:Observation=boot.state,ownsControl=boot.ownsControl,controlAllowed=true,taskBusy=false,appsBusy=false,filter=initialView==='actionable'||initialView==='full'||initialView==='compact'?initialView:'compact',query='';
   let applications:ReturnType<typeof installApplications>|undefined;
   let online=false,connecting=false,connectionId='',connectionEpoch=0,networkAbort=new AbortController(),needsRefresh=false,waking=false,eventsSocket:WebSocket|null=null;
   let recovering=false,transportReady=false,readySignal=false,transportGeneration=0,recoverySince=0,recoveryAttempt=0,lastControlMessage=0,lastEventsMessage=0;

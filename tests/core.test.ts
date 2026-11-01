@@ -15,6 +15,7 @@ import {PageConnections} from '../src/page-connections.js';
 import {shownNodes,escape} from '../src/presentation.js';
 import {nodeTouchPoint,resolveClickOptions} from '../src/click-options.js';
 import {ConsoleError,type AndroidNode,type Navigation,type ApplicationState} from '../src/types.js';
+import {projectObservation,renderObservationText,observationView} from '../src/observation-view.js';
 
 const node=(patch:Partial<AndroidNode>={}):AndroidNode=>({id:'node',parentId:null,depth:0,index:0,text:'按钮',description:'',resourceId:'pkg:id/button',className:'android.widget.Button',package:'pkg',bounds:[0,0,100,100],enabled:true,clickable:true,longClickable:false,checkable:false,checked:false,focused:false,editable:false,password:false,scrollable:false,visible:true,fingerprint:'original',selector:{},instance:0,...patch});
 test('click jitter defaults on, respects false and rejects obsolete mode options',()=>{assert.deepEqual(resolveClickOptions(undefined),{jitter:true,realism:'auto'});assert.deepEqual(resolveClickOptions({},{jitter:false,realism:'auto'}),{jitter:false,realism:'auto'});assert.deepEqual(resolveClickOptions({jitter:false}),{jitter:false,realism:'auto'});for(const value of [null,[],{mode:'touch'},{jitter:'yes'},{pressure:1},{realism:'sometimes'}])assert.throws(()=>resolveClickOptions(value),/点击选项/);});
@@ -287,4 +288,47 @@ test('repeated video configuration preserves a hold and a real resize releases i
   const f=touchFixture();await f.device.video.touch(0,10n,20,20);
   (f.device.video as any).updateDimensions(864,1920);await f.device.video.releaseKeys();assert.deepEqual(f.events.map(p=>p.action),[0]);
   (f.device.video as any).updateDimensions(1920,864);await f.device.video.releaseTouches();assert.deepEqual(f.events.map(p=>p.action),[0,1]);
+});
+
+test('agent observation views keep only act-ready rows and explain inherited clicks',()=>{
+  const nav=node({id:'home',text:'',clickable:true,className:'android.widget.FrameLayout',bounds:[0,0,120,120]});
+  const navLabel=node({id:'home-label',parentId:'home',text:'打开主页',clickable:false,className:'android.widget.TextView',bounds:[10,10,110,110]});
+  const card=node({id:'card',text:'账户与安全',clickable:true,bounds:[0,200,400,320]});
+  const cardSub=node({id:'card-sub',parentId:'card',text:'指纹',clickable:false,bounds:[10,220,390,300]});
+  const disabled=node({id:'next',text:'下一步',clickable:true,enabled:false,bounds:[0,400,400,500]});
+  const field=node({id:'search',text:'搜索',clickable:false,editable:true,focused:true,bounds:[0,600,400,700],className:'android.widget.EditText',resourceId:'pkg:id/search'});
+  const tip=node({id:'tip',text:'提示文字',clickable:false,bounds:[0,800,400,900]});
+  const nodes=[nav,navLabel,card,cardSub,disabled,field,tip];
+  const state={connected:true,serial:'s',model:'m',android:'a',system:'x',width:1000,height:1000,rotation:0,screenOn:true,locked:false,snapshotId:'ui-1',captureSeq:4,collectedAt:1000,nodes,foregroundApp:'pkg',focus:field,focusEpoch:1,uiError:null,videoError:null,controlAvailable:true} as any;
+
+  assert.equal(observationView(undefined),'actionable');assert.equal(observationView('full'),'full');assert.equal(observationView('bogus','full'),'full');
+
+  const actionable=projectObservation(state,'actionable',4000);
+  assert.deepEqual(actionable.rows.map(r=>r.id),['nhome','ncard','nnext','nsearch']);
+  assert.deepEqual(actionable.focus,{id:'nsearch',label:'search'});
+  assert.equal(actionable.ageMs,3000);assert.equal(actionable.totalNodes,7);
+  const nextRow=actionable.rows.find(r=>r.id==='nnext')!;
+  assert.equal(nextRow.disabled,true);assert.equal(nextRow.clickable,true);
+  const fieldRow=actionable.rows.find(r=>r.id==='nsearch')!;
+  assert.equal(fieldRow.editable,true);assert.equal(fieldRow.clickable,undefined);
+  // Rows stay lean: false flags are omitted rather than carried as booleans.
+  assert.ok(!('longClickable' in nextRow));
+
+  const compact=projectObservation(state,'compact',1000);
+  assert.deepEqual(compact.rows.map(r=>r.id),['nhome','ncard','ncard-s','nnext','nsearch','ntip']);
+  const sub=compact.rows.find(r=>r.id==='ncard-s')!;
+  assert.equal(sub.clickTarget,'ncard');assert.equal(sub.clickable,undefined);
+
+  const text=renderObservationText(actionable,4000);
+  const lines=text.split('\n');
+  assert.match(lines[0]!,/^安卓观察 · 1000×1000/);
+  assert.match(lines[1]!,/快照 ui-1 · 3\.0 秒前 · 前台 pkg · 4\/7 行（可操作）/);
+  assert.equal(lines[2],'焦点 nsearch search');
+  assert.ok(text.includes('nnext · 下一步 · 不可用 · 可点击 · [0,400→400,500]'));
+  assert.ok(text.includes('nsearch · search · 可编辑 · 文本：搜索 · 焦点 · [0,600→400,700] · id/search'),text);
+  assert.ok(!text.includes('提示文字'));
+  const compactText=renderObservationText(compact,1000);
+  assert.ok(compactText.includes('ncard-s · 指纹 · 点击→ncard · [10,220→390,300]'));
+  assert.ok(compactText.includes('ntip · 提示文字 · 不可点击'));
+  assert.ok(renderObservationText({...actionable,collectedAt:0},40000).includes('已过期，请刷新'));
 });

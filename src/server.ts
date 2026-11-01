@@ -10,6 +10,7 @@ import { promisify } from 'node:util';
 import { resolve } from 'node:path';
 import { z } from 'zod';
 import { Device,keyCodes } from './device.js';
+import { observationView,projectObservation,renderObservationText } from './observation-view.js';
 import { Tasks } from './tasks.js';
 import { ConsoleError } from './types.js';
 import { render,readAssetVersion } from './ui.js';
@@ -86,7 +87,7 @@ app.post(endpoint('/api/connection/resume'),async req=>{
   const connection=pages.require(p.pageId,s.id,p.connectionId,true);suspendConnection(connection,'CLIENT_RECONNECT');
   return serialized(async()=>{const current=pages.resume(p.pageId,s.id,p.connectionId);await rtc.retain(current.owner,p.videoAttemptId);pages.require(p.pageId,s.id,p.connectionId,true);(req as any).auditOwner=current.owner;connectionAudit(current,'resume_attempt','ORIGINAL_SESSION');return {connectionId:current.owner,generation:current.generation,graceMs:RECOVERY_GRACE_MS};});
 });
-app.get(endpoint('/api/observation'),async req=>{session(req);return device.state;});
+app.get(endpoint('/api/observation'),async req=>{session(req);const view=observationView((req.query as any)?.view,'full');return view==='full'?device.state:projectObservation(device.state,view);});
 installWebRtcRoutes(app,endpoint,session,rtc);
 installClientVideoLog(app,endpoint,{session:req=>session(req,true,true)});
 app.post(endpoint('/api/video/select'),req=>{const s=session(req,true),p=z.object({attemptId:z.string().uuid()}).strict().parse(req.body);return rtc.select(s.owner,p.attemptId);});
@@ -120,7 +121,14 @@ app.get(endpoint('/api/tasks'),req=>{const s=session(req);return tasks.latest().
 app.post(endpoint('/api/tasks'),async req=>{const s=session(req,true);const p=z.object({code:z.string().max(32768),check:z.boolean().optional(),clickOptions:clickOptionsSchema.optional()}).parse(req.body);pages.activity(s.owner);return publicTask(await tasks.start(p.code,s.owner,p.check,p.clickOptions),s.owner);});
 app.post(endpoint('/api/tasks/:id/stop'),async req=>{const s=session(req,true);return publicTask(tasks.stop((req.params as any).id,s.owner),s.owner);});
 app.get(endpoint('/tasks/:id'),async(req,reply)=>{const s=session(req);const t=tasks.records.get((req.params as any).id);if(!t)throw new ConsoleError('TASK_NOT_FOUND','任务不存在',404);return reply.type('text/html').send('<!doctype html><meta charset="utf-8"><title>脚本任务结果</title><a href="'+endpoint('/')+'">返回控制台</a><pre>'+escape(JSON.stringify(publicTask(t,s.owner),null,2))+'</pre>');});
-app.get(endpoint('/observe'),async(req,reply)=>{session(req);return reply.type('text/html').send('<!doctype html><meta charset="utf-8"><title>安卓观察</title><a href="'+endpoint('/')+'">控制台</a><pre>'+escape(JSON.stringify(device.state,null,2))+'</pre>');});
+// 文字观察页：给文字与 LLM Agent 读的同一份界面。默认只列可操作行并按行写成文本，
+// 完整 JSON 仍可用 ?view=full&format=json 取回。
+app.get(endpoint('/observe'),async(req,reply)=>{
+  session(req);
+  const query=req.query as any,view=observationView(query.view),format=query.format==='json'?'json':'text';
+  if(format==='json'){const body=view==='full'?device.state:projectObservation(device.state,view);return reply.type('application/json; charset=utf-8').send(JSON.stringify(body,null,1));}
+  return reply.type('text/plain; charset=utf-8').send(renderObservationText(projectObservation(device.state,view==='full'?'actionable':view)));
+});
 function websocketAudit(req:any,path:string,owner:string|undefined,action:string,closeCode?:number,reason?:string){audit.record({at:new Date().toISOString(),method:'EVENT',path,status:200,ip:req.ip,client:String(req.headers['user-agent']||'').slice(0,300),owner,action,closeCode,reason:reason?.slice(0,120)});}
 function rejectSocket(ws:any,error:any){const reason=error.code||'ORIGIN_REJECTED';ws.send(JSON.stringify({type:reason==='STALE_TRANSPORT'?'recovering':'offline',reason}));ws.close(4001,reason);}
 app.get(endpoint('/ws/events'),{websocket:true},(ws,req)=>{

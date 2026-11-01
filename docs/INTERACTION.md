@@ -32,6 +32,35 @@ try {
 }
 ```
 
+## 观察视图：完整、精简与可操作
+
+同一份采集有四种读法，内容都来自同一棵树，不另做换算：
+
+| 入口 | 默认 | 其他取值 |
+|---|---|---|
+| `GET /api/observation` | `view=full`：完整观测与全部节点 | `compact`、`actionable` |
+| `GET /observe`（文字观察页） | 文本：只列可操作行 | `?view=compact`、`?view=full&format=json` 取回完整 JSON、`?format=json` 取投影 JSON |
+| `device.observe()` | 完整观测 | `device.observe({view:"actionable"})` |
+| `device.observeText()` | 文本：只列可操作行 | `device.observeText({view:"compact"})` |
+
+控制台页面本身也接受 `?view=actionable`，打开即停在“可操作”筛选（实测同一页面的无障碍树从 23.8k 字符降到 16.1k），人工可随时切回“精简”。
+
+投影视图返回 `rows`，每行只带动作需要的信息：`id`、`label`、`bounds`、`resourceId`、`className`，以及为真才出现的 `clickable`、`editable`、`checked`、`disabled`、`longClickable`、`scrollable`、`focused`。行本身不可点、但点击会被祖先承接时，给出 `clickTarget`（祖先行 id）。全为假的字段直接省略，Agent 不必在布尔噪声里找目标。`focus` 同时给出短 id 与标签。
+
+文字视图一行一个节点：
+
+```
+安卓观察 · 1080×2400 · 旋转 0° · 屏幕开 · 未锁屏
+快照 ui-42 · 1.2 秒前 · 前台 org.cromite.cromite · 24/100 行（可操作）
+焦点 n0ca27c search
+
+n0ca27c · search · 可编辑 · 文本：地址栏 · 焦点 · [0,72→924,132]
+n12ab34 · 打开主页 · 可点击 · [0,132→132,226] · id/home_button
+n55cd01 · 指纹 · 点击→n44ab90 · [10,220→390,300]
+```
+
+`actionable` 只保留可点击、可输入、可勾选、可长按、可滚动的行；`compact` 另保留有文字的叶子行，并去掉与可点祖先重复的标签。视图只是过滤，不改动作语义：点击仍按所选行的祖先规则解析，坐标仍是手机像素。
+
 ## 随机落点
 
 元素点击、长按，以及需要改变状态的开关点击，默认开启随机落点。界面元素区域的“随机落点”复选框可以关闭它，设置保存在当前浏览器中。执行 JS 时保存该设置作为本次任务的默认值；任务开始后再修改复选框，不会改变运行中任务的默认值。

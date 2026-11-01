@@ -1,6 +1,7 @@
-export const SDK_VERSION='1.5.0';
+export const SDK_VERSION='1.6.0';
 export const apiMethods = [
-  {name:'device.observe()',signature:'device.observe(): Promise<Observation>',purpose:'只读：请求一次新的安卓节点采集。',params:'无参数。',result:'返回 snapshotId、captureSeq、collectedAt、windowId、foregroundApp、nodes、focus 与错误。',example:'return await device.observe();',note:'内容未变时 snapshotId 不变，captureSeq 仍增加。SDK 错误提供 code；已发送动作另带 execution、verification，不自动重试。'},
+  {name:'device.observe(options)',signature:'device.observe({view="full"}={}): Promise<Observation|ProjectedObservation>',purpose:'只读：请求一次新的安卓节点采集。',params:'view：full（默认，完整节点）、actionable（只列可操作行）、compact（可操作行加文字）。',result:'view=full 返回 snapshotId、captureSeq、collectedAt、windowId、foregroundApp、nodes、focus 与错误；其余视图返回 rows，每行含 id、label、bounds、resourceId 及可点/可编辑/已禁用等标记。',example:'const seen = await device.observe({ view: "actionable" }); return seen.rows;',note:'内容未变时 snapshotId 不变，captureSeq 仍增加。项目化视图省略全为假的字段，并给出点击会落在哪个祖先行。SDK 错误提供 code；已发送动作另带 execution、verification，不自动重试。'},
+  {name:'device.observeText(options)',signature:'device.observeText({view="actionable"}={}): Promise<string>',purpose:'只读：同一份采集的文字版本，一行一个节点。',params:'view：actionable（默认）或 compact。',result:'返回多行文字：一行状态头、一行快照信息、一行焦点，随后每行 `<id> <名称> · 能力 · [l,t→r,b] · id/资源`。',example:'console.log(await device.observeText());',note:'给文字与 LLM Agent 读；内容与网页节点列表一致，不额外换算坐标。'},
   {name:'device.element(selector)',signature:'device.element(selector): ElementLocator',purpose:'建立节点查询，本身不操作手机。',params:'text、resourceId、description、className、package，可组合精确匹配；text 与 description 是独立字段。',result:'返回具有动作方法的定位器。',example:'await device.element({ text: "WLAN" }).click();',note:'执行时必须唯一匹配；重名报 AMBIGUOUS_TARGET，不猜第一个。'},
   {name:'element.click()',signature:'ElementLocator.click({jitter}={}): Promise<ActionResult>',purpose:'模拟触摸；文字标签可由最近的有效可点击祖先承接。',params:'jitter：可选布尔值，默认沿用运行脚本时的“随机落点”设置；未指定设置时开启。',result:'返回 sourceTarget、actionTarget、执行回执和实际手机像素落点 point。',example:'await device.element({ text: "WLAN" }).click({jitter:true});',note:'唯一匹配后验证窗口、节点与祖先；落点保留在原标签区域，不猜同名节点或点击大容器中心。单轴偏移最多 5 px；不保证免于风控。'},
   {name:'element.longPress()',signature:'ElementLocator.longPress({durationMs=700,jitter}={}): Promise<ActionResult>',purpose:'长按报告 longClickable 的目标。',params:'durationMs：400–3000 毫秒；jitter 同 click。',result:'返回执行回执及实际手机像素落点 point。',example:'await device.element({ text: "WLAN" }).longPress({durationMs:800,jitter:true});',note:'未报告长按能力时拒绝；整个按下到抬起过程使用同一个落点。'},
@@ -31,7 +32,7 @@ export const apiMethods = [
 export function sdkBootstrap() {
   return `const call=(method,params={})=>__rpc(method,JSON.stringify(params)).then(JSON.parse);
   globalThis.device=Object.freeze({
-    panel:(kind)=>call('panel',{kind}),clipboard:()=>call('clipboard',{write:false}),setClipboard:(text)=>call('clipboard',{write:true,text}),observe:()=>call('observe'),uiTree:()=>call('uiTree'),screenshot:()=>call('screenshot'),
+    panel:(kind)=>call('panel',{kind}),clipboard:()=>call('clipboard',{write:false}),setClipboard:(text)=>call('clipboard',{write:true,text}),observe:(options={})=>call('observe',options),observeText:(options={})=>call('observeText',options),uiTree:()=>call('uiTree'),screenshot:()=>call('screenshot'),
     element:(selector)=>Object.freeze({
       click:(options={})=>call('node',{selector,action:'click',clickOptions:options}),
       longPress:(options={})=>{const {durationMs,...clickOptions}=options;return call('node',{selector,action:'longPress',value:durationMs??700,clickOptions});},
