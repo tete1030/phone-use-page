@@ -97,6 +97,7 @@ npm run check:compose # 需要 Docker Compose 插件
 - 自动重启 server 有冷却（`ADB_RESTART_COOLDOWN_MS`，默认 60000）和窗口上限（10 分钟内 3 次），失败按 5s→10s→…→300s 退避；
 - 连续失败 8 次后暂停自动恢复 5 分钟，避免和外部 adb 用户反复抢；
 - 恢复成功后自动重建 UI 桥接与 scrcpy，页面无需刷新。
+-  让 adbd 及其 shell 进入 su 域，本镜像的 su 域连不上 loopback TCP，uiautomator2 的桥接会整体失联（scrcpy 走 abstract socket，画面仍正常，于是表现为「有视频、页面一直连接中」）。控制台启动时、恢复时和空闲时的 60s 看门狗都会检查 501，见到 root 就  并重建控制层；需要在手机上保留 root 时设置 。
 
 页面顶栏在异常时出现「恢复 ADB」按钮（`POST /api/device/recover`），会忽略冷却与暂停、强制跑完整恢复并重置退避；`GET /api/device/health` 返回当前状态。设置 `ADB_AUTO_RECOVER=0` 可关闭自动恢复，只保留手动按钮。
 
