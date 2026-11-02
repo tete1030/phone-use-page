@@ -88,6 +88,18 @@ npm run check:compose # 需要 Docker Compose 插件
 
 浏览器测试使用模拟数据，不操作真实设备。`tests/` 下的实机测试需要主动选择运行；先配置自己的设备、地址和凭据，并审查其操作影响。测试截图及输出存放在被 Git 忽略的 `.local/` 中。
 
+## ADB 链路自愈
+
+控制台使用本机 `127.0.0.1:5037` 上的 adb server。外部程序偶尔使用 adb（`kill-server`、版本不匹配导致 server 重启、USB 被透传，或 `adb root` 重启 adbd）会让设备离线。服务端内置一个轻量的 transport 看门狗：
+
+- 每 `ADB_PROBE_INTERVAL_MS`（默认 8000）执行一次 `adb devices`；
+- 设备 `offline` / 不在列表时，先 `adb reconnect`，仍不行才 `kill-server` + `start-server`；
+- 自动重启 server 有冷却（`ADB_RESTART_COOLDOWN_MS`，默认 60000）和窗口上限（10 分钟内 3 次），失败按 5s→10s→…→300s 退避；
+- 连续失败 8 次后暂停自动恢复 5 分钟，避免和外部 adb 用户反复抢；
+- 恢复成功后自动重建 UI 桥接与 scrcpy，页面无需刷新。
+
+页面顶栏在异常时出现「恢复 ADB」按钮（`POST /api/device/recover`），会忽略冷却与暂停、强制跑完整恢复并重置退避；`GET /api/device/health` 返回当前状态。设置 `ADB_AUTO_RECOVER=0` 可关闭自动恢复，只保留手动按钮。
+
 ## 限制
 
 - 自绘界面、受保护视频和部分 WebView 可能不提供可用节点或文本操作。

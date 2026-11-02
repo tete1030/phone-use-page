@@ -46,6 +46,8 @@ export class Device extends EventEmitter {
   private sessionActive=false;
   private pendingActions=0;private manualTouchOwner?:string;
   get touching(){return !!this.manualTouchOwner;}
+  /** Gestures, tasks and queued actions must finish before the transport is rebuilt. */
+  get busy(){return this.pendingActions>0||this.touching||!!this.activeTask;}
   ownsTouch(owner:string){return this.manualTouchOwner===owner;}
   beginTouch(owner:string){
     if(this.pendingActions||this.manualTouchOwner)throw new ConsoleError('DEVICE_BUSY','设备正在执行其他动作，请稍后触摸',409);
@@ -55,6 +57,12 @@ export class Device extends EventEmitter {
   assertTouchReady(){if(!this.state.controlAvailable)throw new ConsoleError('NO_CONTROL','手机控制通道不可用，触摸未继续',503);if(this.state.powerError||!this.state.powerCollectedAt||Date.now()-this.state.powerCollectedAt>10000)throw new ConsoleError('POWER_UNKNOWN','手机状态已过期，请等待状态恢复',409);this.assertScreen();}
   endTouch(owner:string){if(this.manualTouchOwner===owner){this.manualTouchOwner=undefined;this.notify();}}
   async setConnected(active:boolean){this.sessionActive=active;if(active){void this.deviceCapabilities();await this.video.start();await this.video.confirmKeyboard(await this.bridge.call<boolean>('keyboardPresent').catch(()=>false));this.state.keyboardBackend=this.video.keyboardBackend;this.state.controlAvailable=!!this.video.client?.controller;await this.setKeepAwake(true);try{await this.collect();}catch{}}else{await this.setKeepAwake(false);await this.video.close();this.state.controlAvailable=false;this.state.keyboardBackend='offline';}this.notify();}
+  /** Rebuild everything that rides on top of the adb transport: UI bridge and scrcpy. */
+  async resetTransport(){
+    this.bridge.reset();await this.video.reset();
+    this.state.connected=false;this.state.controlAvailable=false;this.state.keyboardBackend='initializing';
+    this.state.uiError='正在恢复 ADB 连接';this.state.videoError=null;this.notify();
+  }
   private stopped=false; private generation=0; private hash='';private foregroundTimer=0;
   private fullTimer?: NodeJS.Timeout; private leaseTimer?: NodeJS.Timeout;
   private summaryTimer?:NodeJS.Timeout;

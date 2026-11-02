@@ -159,4 +159,11 @@ export class Video extends EventEmitter {
     await this.releaseTouches();await this.releaseKeys();
   }
   async close(){await this.release().catch(()=>{});await this.hardware?.close().catch(()=>{});this.hardware=undefined;const old=this.client;this.client=undefined;try{await old?.close();}catch{}this.closeViewers('Device disconnected');}
+  /** Drop the scrcpy session but keep viewers: the next start() reopens it on the new adb transport. */
+  async reset(){
+    const hardware=this.hardware;this.hardware=undefined;try{await hardware?.close();}catch{}
+    const old=this.client;this.client=undefined;this.config=undefined;this.keyboardBackend='initializing';
+    if(old){const closing=old.close().catch(()=>{});await Promise.race([closing,new Promise<void>(resolve=>setTimeout(resolve,2000))]);}
+    this.emit('status','正在重建 ADB 视频通道');
+  }
 }

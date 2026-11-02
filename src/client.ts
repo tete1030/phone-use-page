@@ -256,7 +256,12 @@ async function initialize() {
     q<HTMLButtonElement>('.inspect-toggle').disabled=!valid||!n?.checkable||!n.clickable;q<HTMLButtonElement>('.locate').disabled=!valid;q<HTMLButtonElement>('.properties').disabled=!n;
   }
   function update(state:Observation,controls?:{ownsControl:boolean;controlAllowed:boolean;taskBusy:boolean}){if(!online||observationFromConnection&&!acceptsObservation(observation,state))return;const incoming=state!==observation||!!controls;if(incoming)observationFromConnection=true;if(controls){ownsControl=controls.ownsControl;controlAllowed=controls.controlAllowed;taskBusy=controls.taskBusy;}const power=observation.powerCollectedAt&&(!state.powerCollectedAt||state.powerCollectedAt<observation.powerCollectedAt)?{screenOn:observation.screenOn,locked:observation.locked,powerCollectedAt:observation.powerCollectedAt,powerError:observation.powerError}:{};observation={...state,...power};if(touch?.active()&&(!interactive()||!state.controlAvailable||taskBusy))touch.cancel('手机控制状态已改变，手势已释放');assign(q('.device-model'),state.model||'Android');assign(q('.device-system'),state.system||state.android);assign(q('.phone-summary'),state.keepAwakeError||'');q<HTMLElement>('.phone-summary').hidden=!state.keepAwakeError;assign(q('.connection-state'),state.connected?'ADB 已连接':state.uiError&&state.controlAvailable?'UI 暂不可用':state.uiError?'连接异常':'未连接');assign(q('.foreground'),state.foregroundApp||'未知');assign(q('.android-focus'),state.focus?label(state.focus,state.nodes):'无可读输入框');assign(q('.display-size'),`${state.width} × ${state.height}`);
-    assign(q('.transport-status'),state.videoError||state.uiError||(state.locked?'设备锁屏，请手动解锁':state.screenOn?'设备已亮屏':'设备息屏'));
+    const adb=state.adbHealth,adbButton=q<HTMLButtonElement>('.adb-recover');
+    const adbNote=adb&&adb.phase!=='ok'?(adb.phase==='paused'?'ADB 自动恢复已暂停（可能被其他程序占用），可点「恢复 ADB」重试':adb.phase==='recovering'?'正在恢复 ADB 连接…':'ADB 连接异常（可能被其他程序占用）'):'';
+    adbButton.hidden=!adb||adb.phase==='ok';adbButton.disabled=!!adb?.busy;
+    adbButton.textContent=adb?.phase==='recovering'?'恢复中…':'恢复 ADB';
+    adbButton.title=adb?.lastError?('最近错误：'+adb.lastError):'重新建立 ADB 连接（会重连 adb server，可能短暂影响同机其他 adb 客户端）';
+    assign(q('.transport-status'),adbNote?adbNote+(state.videoError||state.uiError?'；'+(state.videoError||state.uiError):''):state.videoError||state.uiError||(state.locked?'设备锁屏，请手动解锁':state.screenOn?'设备已亮屏':'设备息屏'));
     renderNodes();renderPhone();textState();route();fitPhone();
   }
   async function writeDraft(){
@@ -319,6 +324,7 @@ async function initialize() {
   phone.addEventListener('click',event=>{if(event.detail===0&&online&&transportReady&&needsWake()&&!waking)void wakePhone();else if(interactive()&&controlAllowed&&!appsBusy&&event.detail===0&&!waking)void perform('/api/gesture',{kind:'tap',x:observation.width/2,y:observation.height/2}).catch(()=>{});});
   qa('[data-panel]').forEach(button=>button.addEventListener('click',()=>void perform('/api/panel',{kind:button.dataset.panel}).catch(()=>{})));
   q('.video-reconnect').addEventListener('click',()=>{if(!online)return;videoManager?.stop();connectVideo();log('重新建立视频，不改变设备控制连接');});
+  q('.adb-recover').addEventListener('click',async()=>{const button=q<HTMLButtonElement>('.adb-recover');if(button.disabled||!online)return;button.disabled=true;const label=button.textContent;button.textContent='恢复中…';try{const result=await api('/api/device/recover',{});log('ADB 恢复：'+((result.steps||[]).join(' → ')||'设备已在线，控制层已重建'));}catch(error){log('ADB 恢复失败：'+String(error));}finally{button.textContent=label;button.disabled=false;}});
   q('.video-enlarge').addEventListener('click',()=>void enterImmersive());
   addEventListener('keydown',event=>{if(event.key==='Escape'&&phonePane.classList.contains('enlarged')){void exitImmersive();}});
   q('.screenshot-save').addEventListener('click',async()=>{try{const response=await fetch(viewUrl('/api/screenshot'));if(!response.ok)throw Error('截图失败');const value=URL.createObjectURL(await response.blob()),link=document.createElement('a');link.href=value;link.download='phone-'+Date.now()+'.png';link.click();setTimeout(()=>URL.revokeObjectURL(value),5000);}catch(error){log(String(error));}});

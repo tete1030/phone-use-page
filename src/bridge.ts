@@ -41,5 +41,7 @@ export class Bridge {
       child.stdin.write(JSON.stringify({ id, method, params }) + '\n');
     });
   }
+  /** Drop the worker so the next call reconnects; used after the adb transport is rebuilt. */
+  reset() {const child=this.child;this.child=undefined;if(child){this.rejectChild(child,new ConsoleError('BRIDGE_RESET','UI 桥接已重置，正在重连',503));child.kill();}}
   close() {this.closed=true;const child=this.child;this.child=undefined;if(child){this.rejectChild(child,new ConsoleError('BRIDGE_CLOSED','UI bridge closed',503));child.kill();}}
 }

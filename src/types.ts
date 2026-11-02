@@ -16,6 +16,15 @@ export interface Observation {
   foregroundApp: string; focus: AndroidNode | null; focusEpoch: number;
   powerCollectedAt?:number; powerError?:string|null; focusReason?:string|null; keyboardBackend?:string; keepAwake?:boolean; keepAwakeError?:string; summary?:{battery:number|null;charging:boolean;inputMethod:string;network:string};
   uiError: string | null; videoError: string | null; controlAvailable: boolean;
+  adbHealth?: AdbHealthSnapshot;
+}
+export type AdbDeviceState = 'device' | 'offline' | 'unauthorized' | 'missing' | 'server_error';
+export interface AdbHealthSnapshot {
+  phase: 'ok' | 'degraded' | 'recovering' | 'paused';
+  detail: AdbDeviceState;
+  busy: boolean;
+  lastOkAt: number | null; lastAttemptAt: number | null;
+  lastError: string | null; attempts: number; nextAttemptAt: number | null;
 }
 export interface TargetContent { className:string; package:string; resourceId:string; text:string; description:string }
 export interface Target { id: string; fingerprint: string; snapshotId?: string; windowId?:string; content?:TargetContent }

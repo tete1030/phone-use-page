@@ -10,6 +10,7 @@ import { promisify } from 'node:util';
 import { resolve } from 'node:path';
 import { z } from 'zod';
 import { Device,keyCodes } from './device.js';
+import { AdbHealth } from './adb-health.js';
 import { observationView,projectObservation,renderObservationText,applyObservationDelta,fullObservationDelta,type ObservationView } from './observation-view.js';
 import { Tasks } from './tasks.js';
 import { ConsoleError } from './types.js';
@@ -52,6 +53,15 @@ const audit=new Audit(resolve(process.env.AUTH_DATA_DIR||'.local/auth','../audit
 app.addHook('onResponse',async(req,reply)=>{if(internalPath(req.url.split('?')[0]!,basePath)===CLIENT_VIDEO_ERROR_PATH)return;const logged=auth.get(req.cookies[authHttp.cookieName]);const body=(req.body||{}) as any;audit.record({at:new Date().toISOString(),method:req.method,path:internalPath(req.url.split('?')[0]!,basePath),status:reply.statusCode,ip:req.ip,client:String(req.headers['user-agent']||'').slice(0,300),owner:(req as any).auditOwner,user:logged||req.url===endpoint('/api/login')&&reply.statusCode===200?'console':'anonymous',session:logged?.id,verification:(req as any).auditVerification,errorCode:(req as any).auditErrorCode,requestId:typeof body.requestId==='string'?body.requestId:undefined,action:typeof body.action==='string'?body.action:undefined,target:typeof body.target?.id==='string'?body.target.id:typeof body.packageName==='string'?body.packageName:undefined});});
 const controls=new Map<string,unknown>();
 const pages=new PageConnections();tasks.onActivity=owner=>{pages.requireOwner(owner);if(pages.idle(owner)){disconnect(pages.active!,'IDLE_TIMEOUT');throw new ConsoleError('PAGE_OFFLINE','5分钟无操作，已断开',409);}pages.activity(owner);};device.authorize=owner=>{pages.requireOwner(owner);if(!auth.getById(pages.active!.page.sessionId))throw new ConsoleError('LOGIN_REQUIRED','登录已失效',401);};
+// adb transport 可能被外部程序抢走（kill-server、版本不匹配重启、USB 透传、adb root）。
+// 这里只负责把链路拿回来；页面/视频/UI 桥接的重建交给 device.resetTransport。
+const adbHealth=new AdbHealth({adbPath:adb,serial,isIdle:()=>!device.busy,onRestore:async()=>{
+  await device.resetTransport();
+  try{await device.collect();}catch{}
+  if(pages.active?.online)await device.setConnected(true).catch(()=>{});
+}});
+device.state.adbHealth=adbHealth.snapshot();
+adbHealth.on('state',snapshot=>{device.state.adbHealth=snapshot;device.publish();});
 let activationTail:Promise<unknown>=Promise.resolve();
 function serialized<T>(work:()=>Promise<T>){const next=activationTail.then(work);activationTail=next.catch(()=>{});return next;}
 async function cleanup(connection:PageConnection){tasks.revokeOwner(connection.owner);await rtc.close(connection.owner);await device.drain().catch(()=>{});await device.release(connection.owner).catch(()=>{});await device.setConnected(false);if(device.owner===connection.owner){device.owner=undefined;device.publish();}}
@@ -100,6 +110,8 @@ installClientVideoLog(app,endpoint,{session:req=>session(req,true,true)});
 app.post(endpoint('/api/video/select'),req=>{const s=session(req,true),p=z.object({attemptId:z.string().uuid()}).strict().parse(req.body);return rtc.select(s.owner,p.attemptId);});
 app.post(endpoint('/api/video/cancel'),async req=>{const s=session(req,true),p=z.object({attemptId:z.string().uuid()}).strict().parse(req.body);await rtc.cancel(s.owner,p.attemptId);return {ok:true};});
 app.post(endpoint('/api/refresh'),async req=>{session(req,true);return device.collect({fresh:true});});
+app.get(endpoint('/api/device/health'),async req=>{session(req);return adbHealth.snapshot();});
+app.post(endpoint('/api/device/recover'),async req=>{const s=session(req,true,true);pages.activity(s.owner);return adbHealth.recover(true);});
 app.get(endpoint('/api/timeline'),req=>{const s=session(req);return audit.actions(s.owner);});
 app.get(endpoint('/api/sdk'),async req=>{session(req);return {version:SDK_VERSION,methods:apiMethods};});
 app.get(endpoint('/api/app-state'),async req=>{session(req);const p=z.object({refreshCatalog:z.enum(['0','1']).optional()}).parse(req.query);return device.appState(p.refreshCatalog==='1');});
@@ -179,6 +191,7 @@ app.get(endpoint('/ws/control'),{websocket:true},(ws,req)=>{
 function publicTask(t:any,owner:string){const {owner:taskOwner,code,...rest}=t;return {...rest,canStop:taskOwner===owner,code:taskOwner===owner?code:undefined};}
 function escape(s:string){return s.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;');}
 void device.start().catch(error=>console.error('Device initialization:',String(error)));
+adbHealth.start();
 await app.listen({host,port});console.log('Android Console: http://'+host+':'+port+' (device '+serial+')');
-async function shutdown(){clearInterval(pageTimer);if(pages.active)pages.disconnect(pages.active,'SERVER_RESTART');await rtc.close();await tasks.close();await device.stop();await app.close();await auth.close();await audit.close();process.exit(0);}
+async function shutdown(){clearInterval(pageTimer);adbHealth.stop();if(pages.active)pages.disconnect(pages.active,'SERVER_RESTART');await rtc.close();await tasks.close();await device.stop();await app.close();await auth.close();await audit.close();process.exit(0);}
 process.once('SIGINT',()=>void shutdown());process.once('SIGTERM',()=>void shutdown());
