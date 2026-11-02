@@ -108,3 +108,19 @@ test('manual recovery rebuilds the control layers even when the transport is alr
   assert.deepEqual(result.steps,[]);
   assert.equal(restores(),1);
 });
+
+test('a probe that finds the device back on its own still rebuilds the control layers',async()=>{
+  const f=fixture('missing'),clock={now:1000};
+  f.fixOnRestart(false);
+  const {h,restores}=health(f.run,clock);
+  await h.checkNow();
+  assert.equal(h.snapshot().phase,'degraded');
+  assert.equal(restores(),0);
+
+  // `adb devices` 自己把被 kill 的 server 拉起来时，健康探测直接看到 device。
+  f.setState('device');
+  clock.now+=60000;
+  await h.checkNow();
+  assert.equal(h.snapshot().phase,'ok');
+  assert.equal(restores(),1);
+});

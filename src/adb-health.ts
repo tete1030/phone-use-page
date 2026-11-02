@@ -115,7 +115,14 @@ export class AdbHealth extends EventEmitter {
   async checkNow() {
     if (this.inFlight) return;
     const detail = await this.probe().catch(() => 'server_error' as AdbDeviceState);
-    if (detail === 'device') { this.markOk(); return; }
+    if (detail === 'device') {
+      const wasBad = this.state.phase !== 'ok';
+      this.markOk();
+      // `adb devices` itself restarts a killed server; the transport came back
+      // without a recovery run, so the layers above it still need a rebuild.
+      if (wasBad) { try { await this.options.onRestore(); } catch (error) { this.log('restore failed: ' + String(error)); } }
+      return;
+    }
     const now = this.now();
     if (this.pausedUntil && now >= this.pausedUntil) { this.pausedUntil = 0; this.state.attempts = 0; }
     this.setState({ ...this.state, phase: this.state.phase === 'paused' && this.pausedUntil ? 'paused' : 'degraded', detail, lastError: messages[detail] });
