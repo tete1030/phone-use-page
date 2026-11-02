@@ -208,7 +208,7 @@ app.get(endpoint('/ws/control'),{websocket:true},(ws,req)=>{
 function publicTask(t:any,owner:string){const {owner:taskOwner,code,...rest}=t;return {...rest,canStop:taskOwner===owner,code:taskOwner===owner?code:undefined};}
 function escape(s:string){return s.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;');}
 await ensureShellAdbd();
-const adbdUserTimer=setInterval(()=>{if(device.busy||adbHealth.snapshot().busy)return;void ensureShellAdbd().then(changed=>{if(changed)void adbHealth.recover(true);});},60000);adbdUserTimer.unref?.();
+const adbdUserTimer=setInterval(()=>{if(device.busy||adbHealth.snapshot().busy)return;void ensureShellAdbd().then(changed=>{if(changed)void adbHealth.recover(true);});},15000);adbdUserTimer.unref?.();
 void device.start().catch(error=>console.error('Device initialization:',String(error)));
 adbHealth.start();
 await app.listen({host,port});console.log('Android Console: http://'+host+':'+port+' (device '+serial+')');
