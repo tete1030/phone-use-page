@@ -56,8 +56,23 @@ const pages=new PageConnections();tasks.onActivity=owner=>{pages.requireOwner(ow
 // adb transport 可能被外部程序抢走（kill-server、版本不匹配重启、USB 透传、adb root）。
 // 这里只负责把链路拿回来；页面/视频/UI 桥接的重建交给 device.resetTransport。
 const envMs=(name:string,fallback:number)=>{const value=Number(process.env[name]);return Number.isFinite(value)&&value>0?value:fallback;};
+// `adb root` 把 adbd 和它的 shell 放进 su 域；这块沙箱镜像的 su 域建不起 loopback
+// TCP（connect 直接 EACCES），uiautomator2 的 HTTP 桥接会整体失联，scrcpy 因为走
+// abstract socket 不受影响。控制台只需要 shell 用户，所以见到 root adbd 就切回来。
+async function ensureShellAdbd(){
+  if(process.env.ADB_KEEP_ROOT==='1')return false;
+  try{
+    const id=await exec(adb,['-s',serial,'shell','id','-u'],{timeout:8000});
+    if(String(id.stdout).trim()!=='0')return false;
+    console.error('[adb-health] adbd 以 root 运行，切回 shell（本镜像 su 域无法连接 loopback TCP）');
+    await exec(adb,['-s',serial,'unroot'],{timeout:15000}).catch(()=>{});
+    await exec(adb,['-s',serial,'wait-for-device'],{timeout:30000}).catch(()=>{});
+    return true;
+  }catch{return false;}
+}
 const adbHealth=new AdbHealth({adbPath:adb,serial,isIdle:()=>!device.busy,
   probeIntervalMs:envMs('ADB_PROBE_INTERVAL_MS',8000),restartCooldownMs:envMs('ADB_RESTART_COOLDOWN_MS',60000),onRestore:async()=>{
+  if(await ensureShellAdbd())await new Promise(resolve=>setTimeout(resolve,500));
   await device.resetTransport();
   try{await device.collect();}catch{}
   if(pages.active?.online)await device.setConnected(true).catch(()=>{});
@@ -192,8 +207,10 @@ app.get(endpoint('/ws/control'),{websocket:true},(ws,req)=>{
 });
 function publicTask(t:any,owner:string){const {owner:taskOwner,code,...rest}=t;return {...rest,canStop:taskOwner===owner,code:taskOwner===owner?code:undefined};}
 function escape(s:string){return s.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;');}
+await ensureShellAdbd();
+const adbdUserTimer=setInterval(()=>{if(device.busy||adbHealth.snapshot().busy)return;void ensureShellAdbd().then(changed=>{if(changed)void adbHealth.recover(true);});},60000);adbdUserTimer.unref?.();
 void device.start().catch(error=>console.error('Device initialization:',String(error)));
 adbHealth.start();
 await app.listen({host,port});console.log('Android Console: http://'+host+':'+port+' (device '+serial+')');
-async function shutdown(){clearInterval(pageTimer);adbHealth.stop();if(pages.active)pages.disconnect(pages.active,'SERVER_RESTART');await rtc.close();await tasks.close();await device.stop();await app.close();await auth.close();await audit.close();process.exit(0);}
+async function shutdown(){clearInterval(pageTimer);clearInterval(adbdUserTimer);adbHealth.stop();if(pages.active)pages.disconnect(pages.active,'SERVER_RESTART');await rtc.close();await tasks.close();await device.stop();await app.close();await auth.close();await audit.close();process.exit(0);}
 process.once('SIGINT',()=>void shutdown());process.once('SIGTERM',()=>void shutdown());
