@@ -14,7 +14,7 @@ export interface Observation {
   windowId?: string; uiElapsedMs?: number;
   captureSeq?:number; captureStartedAt?:number; observationRevision?:number;
   foregroundApp: string; focus: AndroidNode | null; focusEpoch: number;
-  powerCollectedAt?:number; powerError?:string|null; focusReason?:string|null; keyboardBackend?:string; keepAwake?:boolean; keepAwakeError?:string; summary?:{battery:number|null;charging:boolean;inputMethod:string;network:string};
+  powerCollectedAt?:number; serverNow?:number; powerError?:string|null; focusReason?:string|null; keyboardBackend?:string; keepAwake?:boolean; keepAwakeError?:string; summary?:{battery:number|null;charging:boolean;inputMethod:string;network:string};
   uiError: string | null; videoError: string | null; controlAvailable: boolean;
   adbHealth?: AdbHealthSnapshot;
 }

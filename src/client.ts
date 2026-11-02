@@ -2,7 +2,7 @@ import {confirmAction} from './confirmation.js';
 import {openDetailDialog,openJsonDetails} from './detail-dialog.js';
 import {resolveNodeClick} from './node-click.js';
 import {targetContent} from './target-match.js';
-import {acceptsObservation,observationExpired} from './observation-order.js';
+import {acceptsObservation,observationExpired as observationExpiredRaw} from './observation-order.js';
 import { AndroidKeyCode } from '@yume-chan/scrcpy';
 import { label, clickHint, nodeValue, shortId, shownNodes, taskResultPreview } from './presentation.js';
 import { projectObservation, renderObservationText } from './observation-view.js';
@@ -70,6 +70,9 @@ async function initialize() {
   q('.logout')?.addEventListener('click',async()=>{if(!await confirmAction('退出登录会断开本会话并停止本会话任务，确认退出？'))return;const button=q<HTMLButtonElement>('.logout');button.disabled=true;try{const r=await fetch(endpoint('/api/logout'),{method:'POST',headers:{'Content-Type':'application/json','X-Console-CSRF':boot.csrf},body:'{}'});if(r.ok||r.status===401)location.reload();else{q<HTMLElement>('.connection-note').hidden=false;q('.connection-note').textContent='退出请求未完成，请刷新后重试';}}finally{button.disabled=false;}});
   // ?view=actionable 让浏览器 Agent 从精简列表开始，省掉重复标签与纯文字行；人工仍可一键切回。
   const initialView=new URLSearchParams(location.search).get('view');
+  let clockOffset=typeof (boot.state as any).serverNow==='number'?Date.now()-(boot.state as any).serverNow:0;
+  const serverNow=()=>Date.now()-clockOffset;
+  const observationExpired=(state:Observation)=>observationExpiredRaw(state,serverNow());
   let observation:Observation=boot.state,ownsControl=boot.ownsControl,controlAllowed=true,taskBusy=false,appsBusy=false,filter=initialView==='actionable'||initialView==='full'||initialView==='compact'?initialView:'compact',query='';
   // 每页 80 行：大页面不必一次把整棵树读进上下文；筛选、搜索、读取都会重置。
   const NODE_PAGE=80;
@@ -87,7 +90,7 @@ async function initialize() {
   let networkInfo:unknown=null,networkLoading=false;
   let videoProvider:VideoProvider|undefined;
   const providerName=(provider:VideoProvider|undefined)=>provider==='coturn'?'自建 TURN':provider==='cloudflare'?'Cloudflare TURN':provider==='wss'?'WSS':'直连 WebRTC';
-  const powerKnown=()=>!observation.powerError&&!!observation.powerCollectedAt&&Date.now()-observation.powerCollectedAt<=10000;
+  const powerKnown=()=>!observation.powerError&&!!observation.powerCollectedAt&&serverNow()-observation.powerCollectedAt<=10000;
   const videoPaused=()=>!powerKnown()||!observation.screenOn||observation.locked!==false;
   const videoPauseReason=()=>!powerKnown()?'power_unknown':!observation.screenOn?'screen_off':observation.locked===true?'locked':observation.locked===null?'power_unknown':null;
   const needsWake=()=>powerKnown()&&(!observation.screenOn||observation.locked===true);
@@ -189,7 +192,7 @@ async function initialize() {
     const focus=active===phone?'手机画面':active===text?'文本输入框':active===editor?'JS 编辑框':active===q('.node-search')?'元素搜索框':'网页';
     q('.routing').classList.toggle('captured',captured);assign(q('.focus-target'),focus);assign(q('.key-target'),captured?'手机按键':'网页');assign(q('.keyboard-backend'),observation.keyboardBackend==='uhid'?'原始键盘：UHID':'原始键盘：兼容按键；推荐文字直达');assign(q('.capture-status'),!online?'已离线':captured?'键盘输入手机 · Esc 退出':active===phone?'手机暂不可输入':'键盘留在网页');
     q<HTMLButtonElement>('.capture').disabled=!ready;q<HTMLButtonElement>('.release').disabled=!online;assign(q('.owner-state'),online&&taskBusy?'脚本执行中':online&&!controlAllowed&&!touch?.active()?'正在处理操作':'');
-    const age=observation.collectedAt?Math.max(0,Math.round((Date.now()-observation.collectedAt)/100)/10):null;
+    const age=observation.collectedAt?Math.max(0,Math.round((serverNow()-observation.collectedAt)/100)/10):null;
     const controlState=!online?'离线':!transportReady?'连接中':!observation.controlAvailable?'设备未允许控制':touch?.active()?'手势中':taskBusy?'脚本执行中':!controlAllowed?'其他页面控制':'就绪';
     assign(q('.agent-status'),`控制=${controlState}｜观察=${age===null?'等待':observationExpired(observation)?`已过期(${age}s)`:`${age}s 前`}｜键盘=${captured?'手机':'网页'}｜前台=${observation.foregroundApp||'未知'}`);
     applications?.controlsChanged();flushQueuedKeys();
@@ -228,7 +231,7 @@ async function initialize() {
     if(!online)return '未连接';
     if(!interactive())return '控制通道尚未就绪';
     if(!observation.controlAvailable)return '设备未允许触摸或按键注入';
-    if(observationExpired(observation))return `观察已过期（${Math.max(1,Math.round((Date.now()-observation.collectedAt)/1000))} 秒前）`;
+    if(observationExpired(observation))return `观察已过期（${Math.max(1,Math.round((serverNow()-observation.collectedAt)/1000))} 秒前）`;
     if(!controlAllowed)return '另一页面正在控制设备';
     if(taskBusy)return '脚本正在执行';
     if(appsBusy)return '应用操作进行中';
@@ -255,7 +258,7 @@ async function initialize() {
     q<HTMLButtonElement>('.inspect-hold').disabled=!valid||!n?.longClickable;q<HTMLButtonElement>('.inspect-focus').disabled=!valid||!n?.editable;
     q<HTMLButtonElement>('.inspect-toggle').disabled=!valid||!n?.checkable||!n.clickable;q<HTMLButtonElement>('.locate').disabled=!valid;q<HTMLButtonElement>('.properties').disabled=!n;
   }
-  function update(state:Observation,controls?:{ownsControl:boolean;controlAllowed:boolean;taskBusy:boolean}){if(!online||observationFromConnection&&!acceptsObservation(observation,state))return;const incoming=state!==observation||!!controls;if(incoming)observationFromConnection=true;if(controls){ownsControl=controls.ownsControl;controlAllowed=controls.controlAllowed;taskBusy=controls.taskBusy;}const power=observation.powerCollectedAt&&(!state.powerCollectedAt||state.powerCollectedAt<observation.powerCollectedAt)?{screenOn:observation.screenOn,locked:observation.locked,powerCollectedAt:observation.powerCollectedAt,powerError:observation.powerError}:{};observation={...state,...power};if(touch?.active()&&(!interactive()||!state.controlAvailable||taskBusy))touch.cancel('手机控制状态已改变，手势已释放');assign(q('.device-model'),state.model||'Android');assign(q('.device-system'),state.system||state.android);assign(q('.phone-summary'),state.keepAwakeError||'');q<HTMLElement>('.phone-summary').hidden=!state.keepAwakeError;assign(q('.connection-state'),state.connected?'ADB 已连接':state.uiError&&state.controlAvailable?'UI 暂不可用':state.uiError?'连接异常':'未连接');assign(q('.foreground'),state.foregroundApp||'未知');assign(q('.android-focus'),state.focus?label(state.focus,state.nodes):'无可读输入框');assign(q('.display-size'),`${state.width} × ${state.height}`);
+  function update(state:Observation,controls?:{ownsControl:boolean;controlAllowed:boolean;taskBusy:boolean}){if(typeof (state as any).serverNow==='number')clockOffset=Date.now()-(state as any).serverNow;if(!online||observationFromConnection&&!acceptsObservation(observation,state))return;const incoming=state!==observation||!!controls;if(incoming)observationFromConnection=true;if(controls){ownsControl=controls.ownsControl;controlAllowed=controls.controlAllowed;taskBusy=controls.taskBusy;}const power=observation.powerCollectedAt&&(!state.powerCollectedAt||state.powerCollectedAt<observation.powerCollectedAt)?{screenOn:observation.screenOn,locked:observation.locked,powerCollectedAt:observation.powerCollectedAt,powerError:observation.powerError}:{};observation={...state,...power};if(touch?.active()&&(!interactive()||!state.controlAvailable||taskBusy))touch.cancel('手机控制状态已改变，手势已释放');assign(q('.device-model'),state.model||'Android');assign(q('.device-system'),state.system||state.android);assign(q('.phone-summary'),state.keepAwakeError||'');q<HTMLElement>('.phone-summary').hidden=!state.keepAwakeError;assign(q('.connection-state'),state.connected?'ADB 已连接':state.uiError&&state.controlAvailable?'UI 暂不可用':state.uiError?'连接异常':'未连接');assign(q('.foreground'),state.foregroundApp||'未知');assign(q('.android-focus'),state.focus?label(state.focus,state.nodes):'无可读输入框');assign(q('.display-size'),`${state.width} × ${state.height}`);
     const adb=state.adbHealth,adbButton=q<HTMLButtonElement>('.adb-recover');
     const adbNote=adb&&adb.phase!=='ok'?(adb.phase==='paused'?'ADB 自动恢复已暂停（可能被其他程序占用），可点「恢复 ADB」重试':adb.phase==='recovering'?'正在恢复 ADB 连接…':'ADB 连接异常（可能被其他程序占用）'):'';
     adbButton.hidden=!adb||adb.phase==='ok';adbButton.disabled=!!adb?.busy;
@@ -419,7 +422,7 @@ async function initialize() {
   function connectEvents(){const epoch=connectionEpoch,events=new WebSocket(url('/ws/events'));eventsSocket=events;events.onopen=()=>{if(epoch===connectionEpoch){lastEventsMessage=Date.now();controlsReady();}};events.onmessage=event=>{if(!online&&!recovering||epoch!==connectionEpoch)return;lastEventsMessage=Date.now();const data=JSON.parse(event.data);
     if(connectionMessage(data))return;
     if(data.type==='observation')update(data.state,data);
-    else if(data.type==='power'){if(data.powerCollectedAt< (observation.powerCollectedAt||0))return;observation.screenOn=data.screenOn;observation.locked=data.locked;observation.powerCollectedAt=data.powerCollectedAt;observation.powerError=null;if(!interactive())void releaseInput();renderPhone();textState();details();}
+    else if(data.type==='power'){if(data.powerCollectedAt< (observation.powerCollectedAt||0))return;if(typeof data.serverNow==='number')clockOffset=Date.now()-data.serverNow;observation.screenOn=data.screenOn;observation.locked=data.locked;observation.powerCollectedAt=data.powerCollectedAt;observation.powerError=null;if(!interactive())void releaseInput();renderPhone();textState();details();}
     else if(data.type==='task')task(data.task);else if(data.type==='tasks')for(const t of data.tasks)task(t);
   };events.onclose=event=>socketClosed(event,epoch);}
   function checkControlHeartbeat(){if(online&&transportReady&&(Date.now()-lastControlMessage>45000||Date.now()-lastEventsMessage>45000))beginRecovery();}

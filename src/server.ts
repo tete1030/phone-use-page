@@ -46,6 +46,11 @@ const serial=selectAndroidDevice(list.stdout,process.env.ANDROID_SERIAL);
 const device=new Device(serial,python,adb),tasks=new Tasks(device);await tasks.init();
 const mediaConfig=rtcConfig(process.env);
 const rtc=new ParallelWebRtcVideo(device.video,mediaConfig,new TurnCredentials(mediaConfig.turn,mediaConfig.stunUrl,await loadTurnKey(mediaConfig.turn)),mediaConfig.fallbackTurn?new TurnCredentials(mediaConfig.fallbackTurn,mediaConfig.stunUrl,await loadTurnKey(mediaConfig.fallbackTurn)):undefined);
+// 浏览器和服务端不在同一台机器上，客户端拿自己的 Date.now() 去减服务端时间戳时，
+// 几秒的时钟差就会被当成「读数过期」：手机状态、观察都被误判成未知/过期，页面
+// 反复闪「手机状态待确认」「观察已过期」。随每条观察/电源消息带上服务端时间，
+// 客户端自己估算时钟差后再比较。
+const withServerClock=(state:any)=>({...state,serverNow:Date.now()});
 function syncVideoPower(){const state=device.state,reason=state.powerError||!state.powerCollectedAt||Date.now()-state.powerCollectedAt>10000?'power_unknown':!state.screenOn?'screen_off':state.locked!==false?'locked':null;rtc.setVideoPaused(reason!==null,reason);}
 device.on('power',syncVideoPower);device.on('observation',syncVideoPower);syncVideoPower();
 const app=Fastify({bodyLimit:262144,logger:false,trustProxy:trustedProxies||false});await app.register(cookie);await app.register(websocket,{options:{maxPayload:65536}});await app.register(statics,{root:resolve('dist/web'),prefix:endpoint('/assets/')});
@@ -103,7 +108,7 @@ app.get('/health',()=>({ok:true,sdk:SDK_VERSION}));
 if(basePath!=='/')app.get(endpoint('/health'),()=>({ok:true,sdk:SDK_VERSION}));
 app.get(endpoint('/'),async(req,reply)=>{
   const s=auth.get(req.cookies[authHttp.cookieName]);if(!s)return reply.type('text/html').send(authHttp.loginPage(reply));
-  const pageId=pages.issue(s.id);return reply.type('text/html').send(await render(device.state,{basePath,assetVersion,webrtc:rtc.browserConfig,csrf:s.csrf,pageId,sdk:SDK_VERSION,apiMethods,tasks:tasks.latest().map(t=>publicTask(t,'')),ownsControl:false}));
+  const pageId=pages.issue(s.id);return reply.type('text/html').send(await render(withServerClock(device.state),{basePath,assetVersion,webrtc:rtc.browserConfig,csrf:s.csrf,pageId,sdk:SDK_VERSION,apiMethods,tasks:tasks.latest().map(t=>publicTask(t,'')),ownsControl:false}));
 });
 app.post(endpoint('/api/connection/connect'),async req=>{
   const s=authenticate(req,true),p=z.object({pageId:z.string().uuid(),explicit:z.boolean().default(false)}).parse(req.body);
@@ -116,7 +121,8 @@ app.post(endpoint('/api/connection/resume'),async req=>{
   return serialized(async()=>{const current=pages.resume(p.pageId,s.id,p.connectionId);await rtc.retain(current.owner,p.videoAttemptId);pages.require(p.pageId,s.id,p.connectionId,true);(req as any).auditOwner=current.owner;connectionAudit(current,'resume_attempt','ORIGINAL_SESSION');return {connectionId:current.owner,generation:current.generation,graceMs:RECOVERY_GRACE_MS};});
 });
 // 观察的两种形状共用一条出口：view=full 回整棵树，其余回行；带上 since 时只回变化的行。
-function observed(view:ObservationView,since?:string){
+function observed(view:ObservationView,since?:string){return withServerClock(observedView(view,since));}
+function observedView(view:ObservationView,since?:string){
   if(view==='full')return since?{...device.state,delta:fullObservationDelta(device.state,device.snapshot(since),since)}:device.state;
   const projected=projectObservation(device.state,view),base=since?device.snapshot(since):undefined;
   return since?applyObservationDelta(projected,base?projectObservation(base,view):undefined,since):projected;
@@ -173,11 +179,11 @@ function rejectSocket(ws:any,error:any){const reason=error.code||'ORIGIN_REJECTE
 app.get(endpoint('/ws/events'),{websocket:true},(ws,req)=>{
   try{const s=session(req,false,true);if(!originAllowed(req.headers.origin,req.headers.host))throw new ConsoleError('ORIGIN_REJECTED','Origin rejected',403);
     pages.attachChannel(s.connection,ws,'events',Number((req.query as any).generation??0));websocketAudit(req,'/ws/events',s.owner,'ws_open');
-    const observation=(state:unknown)=>{if(ws.readyState===1){if(ws.bufferedAmount>1_000_000){ws.close(1013);return;}ws.send(JSON.stringify({type:'observation',state,ownsControl:device.owner===s.owner,controlAllowed:device.canClaim(s.owner),taskBusy:!!device.activeTask}));}};
+    const observation=(state:unknown)=>{if(ws.readyState===1){if(ws.bufferedAmount>1_000_000){ws.close(1013);return;}ws.send(JSON.stringify({type:'observation',state:withServerClock(state),ownsControl:device.owner===s.owner,controlAllowed:device.canClaim(s.owner),taskBusy:!!device.activeTask}));}};
     const task=(t:any)=>{if(ws.readyState===1)ws.send(JSON.stringify({type:'task',task:publicTask(t,s.owner)}));};
     ws.on('message',()=>{try{if(s.connection.channels.get('events')!==ws)return;pages.heartbeat(s.owner);ws.send(JSON.stringify({type:'heartbeat'}));}catch{ws.close(4001,'PAGE_REPLACED');}});
     ws.send(JSON.stringify({type:'tasks',tasks:tasks.latest().map(t=>publicTask(t,s.owner))}));
-    const power=(data:unknown)=>{if(ws.readyState===1)ws.send(JSON.stringify({type:'power',...data as object}));};device.on('power',power);
+    const power=(data:unknown)=>{if(ws.readyState===1)ws.send(JSON.stringify({type:'power',...data as object,serverNow:Date.now()}));};device.on('power',power);
     observation(device.state);device.on('observation',observation);tasks.on('task',task);ws.once('close',(code,reason)=>{websocketAudit(req,'/ws/events',s.owner,'ws_close',code,String(reason));device.off('observation',observation);device.off('power',power);tasks.off('task',task);if(pages.lostChannel(s.connection,ws,'events'))suspendConnection(s.connection,'EVENTS_CLOSED');});
   }catch(error){websocketAudit(req,'/ws/events',undefined,'ws_rejected',undefined,(error as any).code);rejectSocket(ws,error);}
 });
