@@ -92,7 +92,7 @@ npm run check:compose # 需要 Docker Compose 插件
 
 控制台使用本机 `127.0.0.1:5037` 上的 adb server。外部程序偶尔使用 adb（`kill-server`、版本不匹配导致 server 重启、USB 被透传，或 `adb root` 重启 adbd）会让设备离线。服务端内置一个轻量的 transport 看门狗：
 
-- 每 `ADB_PROBE_INTERVAL_MS`（默认 8000）执行一次 `adb devices`；
+- 每 `ADB_PROBE_INTERVAL_MS`（默认 8000）执行一次 `adb devices`，并确认 adb server 的 PID；server 被外部重启时设备列表可能毫无变化，但它持有的 forward 和长连接都已经失效，因此同样会重建 UI 桥接与 scrcpy；
 - 设备 `offline` / 不在列表时，先 `adb reconnect`，仍不行才 `kill-server` + `start-server`；
 - 自动重启 server 有冷却（`ADB_RESTART_COOLDOWN_MS`，默认 60000）和窗口上限（10 分钟内 3 次），失败按 5s→10s→…→300s 退避；
 - 连续失败 8 次后暂停自动恢复 5 分钟，避免和外部 adb 用户反复抢；

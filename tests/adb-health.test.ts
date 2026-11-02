@@ -26,7 +26,7 @@ function fixture(initial:'device'|'offline'|'missing'){
 
 function health(run:AdbRunner,clock:{now:number},extra:Partial<AdbHealthOptions>={}){
   let restores=0;
-  const h=new AdbHealth({adbPath:'adb',serial,run,now:()=>clock.now,reconnectWaitMs:0,serverWaitMs:0,log:()=>{},onRestore:async()=>{restores++;},...extra});
+  const h=new AdbHealth({adbPath:'adb',serial,run,now:()=>clock.now,serverPid:()=>null,reconnectWaitMs:0,serverWaitMs:0,log:()=>{},onRestore:async()=>{restores++;},...extra});
   return {h,restores:()=>restores};
 }
 
@@ -106,6 +106,24 @@ test('manual recovery rebuilds the control layers even when the transport is alr
   const f=fixture('device'),clock={now:1000},{h,restores}=health(f.run,clock);
   const result=await h.recover(true);
   assert.deepEqual(result.steps,[]);
+  assert.equal(restores(),1);
+});
+
+test('an adb server restart rebuilds the layers even when the device list never changed',async()=>{
+  const f=fixture('device'),clock={now:1000};
+  let pid=100;
+  const {h,restores}=health(f.run,clock,{serverPid:()=>pid});
+  await h.checkNow();
+  assert.equal(restores(),0);
+
+  // 外部 adb 客户端 kill-server 后自己又起了一个：设备仍然 device，但 forward 全没了。
+  pid=200;clock.now+=8000;
+  await h.checkNow();
+  assert.equal(restores(),1);
+
+  // 同一个 server 上继续探测不会反复重建。
+  clock.now+=8000;
+  await h.checkNow();
   assert.equal(restores(),1);
 });
 

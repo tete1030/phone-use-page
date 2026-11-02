@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { execFile } from 'node:child_process';
+import { readdirSync, readFileSync } from 'node:fs';
 import type { AdbDeviceState, AdbHealthSnapshot } from './types.js';
 
 export interface AdbRunResult { code: number | null; stdout: string; stderr: string }
@@ -13,6 +14,8 @@ export interface AdbHealthOptions {
   onRestore: () => Promise<void>;
   run?: AdbRunner;
   now?: () => number;
+  /** PID of the adb server; a change means every forward and connection it held is gone. */
+  serverPid?: () => number | null;
   /** Gesture- or task-level work must not be interrupted by a transport reset. */
   isIdle?: () => boolean;
   probeIntervalMs?: number;
@@ -36,6 +39,23 @@ const messages: Record<AdbDeviceState, string> = {
 };
 
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, Math.max(0, ms)));
+
+/**
+ * `adb kill-server` by another client, or a version-mismatched restart, leaves
+ * the device listed exactly as before, so the device list cannot tell us the
+ * forwards and sockets underneath it are gone. The server's PID can.
+ */
+function defaultServerPid(): number | null {
+  try {
+    for (const entry of readdirSync('/proc')) {
+      if (!/^\d+$/.test(entry)) continue;
+      let cmdline: string;
+      try { cmdline = readFileSync(`/proc/${entry}/cmdline`, 'utf8'); } catch { continue; }
+      if (cmdline.split('\0').includes('fork-server')) return Number(entry);
+    }
+  } catch {}
+  return null;
+}
 
 function defaultRunner(adbPath: string): AdbRunner {
   return (args, timeoutMs) => new Promise(resolve => {
@@ -73,6 +93,9 @@ export class AdbHealth extends EventEmitter {
   private inFlight?: Promise<AdbRecoveryResult>;
   private restarts: number[] = [];
   private pausedUntil = 0;
+  private serverPid: () => number | null;
+  private lastServerPid: number | null = null;
+  private probeRestarted = false;
 
   constructor(options: AdbHealthOptions) {
     super();
@@ -81,6 +104,7 @@ export class AdbHealth extends EventEmitter {
     this.now = options.now ?? Date.now;
     this.log = options.log ?? (line => console.error('[adb-health] ' + line));
     this.auto = options.auto ?? process.env.ADB_AUTO_RECOVER !== '0';
+    this.serverPid = options.serverPid ?? defaultServerPid;
   }
 
   snapshot(): AdbHealthSnapshot { return { ...this.state }; }
@@ -96,7 +120,15 @@ export class AdbHealth extends EventEmitter {
 
   /** `adb devices` is cheap and reliable enough to classify what the transport is doing. */
   async probe(): Promise<AdbDeviceState> {
+    this.probeRestarted = false;
     const result = await this.run(['devices'], 4000);
+    // Read the PID after the command: when the server was dead, `adb devices`
+    // itself starts a fresh one.
+    const pid = this.serverPid();
+    if (pid !== null) {
+      if (this.lastServerPid !== null && pid !== this.lastServerPid) this.probeRestarted = true;
+      this.lastServerPid = pid;
+    }
     if (result.code !== 0) return 'server_error';
     const line = result.stdout.split('\n').find(entry => entry.startsWith(this.options.serial + '\t'));
     if (!line) return /cannot connect to daemon|server version/i.test(result.stderr) ? 'server_error' : 'missing';
@@ -120,7 +152,9 @@ export class AdbHealth extends EventEmitter {
       this.markOk();
       // `adb devices` itself restarts a killed server; the transport came back
       // without a recovery run, so the layers above it still need a rebuild.
-      if (wasBad) { try { await this.options.onRestore(); } catch (error) { this.log('restore failed: ' + String(error)); } }
+      // A server restart does the same even when the device list never changed.
+      // No idle gate here: anything riding the old server is already gone.
+      if (wasBad || this.probeRestarted) await this.restore();
       return;
     }
     const now = this.now();
@@ -138,7 +172,7 @@ export class AdbHealth extends EventEmitter {
     if (detail === 'device') {
       this.markOk();
       // 手动恢复即使链路已通也要重建页面/视频层，用来清掉半死的 scrcpy/worker。
-      if (force) { try { await this.options.onRestore(); } catch (error) { this.log('restore failed: ' + String(error)); } }
+      if (force || this.probeRestarted) await this.restore();
       return { steps, state: this.snapshot() };
     }
 
@@ -161,11 +195,15 @@ export class AdbHealth extends EventEmitter {
     if (detail === 'device') {
       this.setState({ ...this.state, phase: 'ok', busy: false, detail: 'device', lastOkAt: this.now(), lastError: null, attempts: 0, nextAttemptAt: null });
       this.pausedUntil = 0;
-      try { await this.options.onRestore(); } catch (error) { this.log('restore failed: ' + String(error)); }
+      await this.restore();
     } else {
       this.fail(detail);
     }
     return { steps, state: this.snapshot() };
+  }
+
+  private async restore() {
+    try { await this.options.onRestore(); } catch (error) { this.log('restore failed: ' + String(error)); }
   }
 
   private fail(detail: AdbDeviceState) {

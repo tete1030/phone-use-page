@@ -55,7 +55,9 @@ const controls=new Map<string,unknown>();
 const pages=new PageConnections();tasks.onActivity=owner=>{pages.requireOwner(owner);if(pages.idle(owner)){disconnect(pages.active!,'IDLE_TIMEOUT');throw new ConsoleError('PAGE_OFFLINE','5分钟无操作，已断开',409);}pages.activity(owner);};device.authorize=owner=>{pages.requireOwner(owner);if(!auth.getById(pages.active!.page.sessionId))throw new ConsoleError('LOGIN_REQUIRED','登录已失效',401);};
 // adb transport 可能被外部程序抢走（kill-server、版本不匹配重启、USB 透传、adb root）。
 // 这里只负责把链路拿回来；页面/视频/UI 桥接的重建交给 device.resetTransport。
-const adbHealth=new AdbHealth({adbPath:adb,serial,isIdle:()=>!device.busy,onRestore:async()=>{
+const envMs=(name:string,fallback:number)=>{const value=Number(process.env[name]);return Number.isFinite(value)&&value>0?value:fallback;};
+const adbHealth=new AdbHealth({adbPath:adb,serial,isIdle:()=>!device.busy,
+  probeIntervalMs:envMs('ADB_PROBE_INTERVAL_MS',8000),restartCooldownMs:envMs('ADB_RESTART_COOLDOWN_MS',60000),onRestore:async()=>{
   await device.resetTransport();
   try{await device.collect();}catch{}
   if(pages.active?.online)await device.setConnected(true).catch(()=>{});
