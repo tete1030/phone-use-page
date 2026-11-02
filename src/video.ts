@@ -23,7 +23,7 @@ export class Video extends EventEmitter {
   client?: AdbScrcpyClient<AdbScrcpyOptions3_3_3<true>>;
   width = 0; height = 0; codec = 0; frames = 0; bytes = 0;
   viewers = new Set<WebSocket>();
-  private starting?: Promise<void>; private hardware?:HardwareKeyboard; keyboardBackend='initializing';
+  private starting?: Promise<void>; private startEpoch=0; private clientEpoch=-1; private hardware?:HardwareKeyboard; keyboardBackend='initializing';
   private config?: Buffer;
   private awaitingKey = new Set<WebSocket>();
   private touchPoints = new Map<bigint, {x:number; y:number}>();
@@ -39,10 +39,30 @@ export class Video extends EventEmitter {
   async start() {
     if (this.client) return;
     if (this.starting) return this.starting;
-    this.starting = this.open().finally(() => { this.starting = undefined; });
-    return this.starting;
+    // A scrcpy start can wedge when its adb forward disappears mid-handshake
+    // (adbd restart, server restart, another host grabbing the device). Without
+    // a deadline that promise never settles and every later start() waits on it.
+    const epoch = this.startEpoch;
+    let timer: NodeJS.Timeout | undefined;
+    const guard = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => { this.startEpoch++; reject(new ConsoleError('SCRCPY_TIMEOUT', '手机画面通道启动超时，正在重试', 503)); }, 20000);
+      timer.unref?.();
+    });
+    let tracked!: Promise<void>;
+    tracked = Promise.race([this.open(epoch), guard]).finally(async () => {
+      clearTimeout(timer);
+      if (this.starting === tracked) this.starting = undefined;
+      // The losing open() may still be stuck on a dead forward; whatever client
+      // it managed to create must go, or the next start() adopts a wedged one.
+      if (epoch !== this.startEpoch && this.client && this.clientEpoch === epoch) {
+        const stale = this.client; this.client = undefined; this.clientEpoch = -1;
+        await stale.close().catch(() => {});
+      }
+    });
+    this.starting = tracked;
+    return tracked;
   }
-  private async open() {
+  private async open(epoch = this.startEpoch) {
     const server = new AdbServerClient(new AdbServerNodeTcpConnector({host:'127.0.0.1',port:5037}));
     const adb = await server.createAdb({serial:this.serial});
     const binary = await readFile('vendor/scrcpy-server-v3.3.3');
@@ -50,7 +70,8 @@ export class Video extends EventEmitter {
     await AdbScrcpyClient.pushServer(adb, new ReadableStream({start(c){c.enqueue(new Uint8Array(binary));c.close();}}), '/data/local/tmp/android-console-scrcpy.jar');
     const options = new AdbScrcpyOptions3_3_3({video:true,audio:false,control:true,videoCodec:'h264',videoCodecOptions:'profile=1,level=4096,i-frame-interval=2,max-bframes=0',...videoEncodingConfig(process.env),tunnelForward:true,powerOn:process.env.KEEP_SCREEN_ON==='1',stayAwake:process.env.KEEP_SCREEN_ON==='1',clipboardAutosync:false,logLevel:'warn'});
     const client = await AdbScrcpyClient.start(adb, '/data/local/tmp/android-console-scrcpy.jar', options);
-    this.client = client;
+    if (epoch !== this.startEpoch) { await client.close().catch(() => {}); return; }
+    this.client = client; this.clientEpoch = epoch;
     // `CONSOLE_KEYBOARD=uhid` opts back into scrcpy's UHID keyboard. The default
     // is keycode injection: UHID adds a USB keyboard called "Android Console
     // Keyboard" to the phone's input device table, which apps enumerate (Feishu's
@@ -70,6 +91,11 @@ export class Video extends EventEmitter {
     })();
     client.exited.then(() => {if(this.client===client){this.client=undefined;this.hardware=undefined;this.keyboardBackend='unavailable';this.config=undefined;this.emit('status','scrcpy connection closed');for(const ws of this.viewers)ws.close(1012,'Device stream closed');}}).catch(()=>{});
     const video = await client.videoStream;
+    if (epoch !== this.startEpoch) {
+      if (this.client === client) { this.client = undefined; this.clientEpoch = -1; this.hardware = undefined; }
+      await client.close().catch(() => {});
+      return;
+    }
     this.width=video.width;this.height=video.height;this.codec=video.metadata.codec;
     video.sizeChanged(size=>this.updateDimensions(size.width,size.height));
     this.sendMetadata();this.emit('status',null);
@@ -158,11 +184,14 @@ export class Video extends EventEmitter {
   async release() {
     await this.releaseTouches();await this.releaseKeys();
   }
-  async close(){await this.release().catch(()=>{});await this.hardware?.close().catch(()=>{});this.hardware=undefined;const old=this.client;this.client=undefined;try{await old?.close();}catch{}this.closeViewers('Device disconnected');}
+  async close(){this.startEpoch++;this.starting=undefined;await this.release().catch(()=>{});await this.hardware?.close().catch(()=>{});this.hardware=undefined;const old=this.client;this.client=undefined;this.clientEpoch=-1;try{await old?.close();}catch{}this.closeViewers('Device disconnected');}
   /** Drop the scrcpy session but keep viewers: the next start() reopens it on the new adb transport. */
   async reset(){
+    // Bump the epoch first: a start() still wedged on the old transport must not
+    // install itself afterwards, and the next start() must not queue behind it.
+    this.startEpoch++;this.starting=undefined;
     const hardware=this.hardware;this.hardware=undefined;try{await hardware?.close();}catch{}
-    const old=this.client;this.client=undefined;this.config=undefined;this.keyboardBackend='initializing';
+    const old=this.client;this.client=undefined;this.clientEpoch=-1;this.config=undefined;this.keyboardBackend='initializing';
     if(old){const closing=old.close().catch(()=>{});await Promise.race([closing,new Promise<void>(resolve=>setTimeout(resolve,2000))]);}
     this.emit('status','正在重建 ADB 视频通道');
   }
